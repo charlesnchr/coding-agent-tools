@@ -1,19 +1,14 @@
 Output demo/agent-usage.gif
 
 Set Shell "bash"
-Set FontSize 18
-Set Width 1280
-Set Height 760
+Set FontSize 15
+Set Width 1680
+Set Height 980
 Set Theme "Catppuccin Mocha"
 Set CursorBlink false
 Set TypingSpeed 35ms
 
-Type "agent-usage weekly codex opencode --breakdown"
+Type "python3 -m coding_agent_tools.agent_usage monthly codex opencode --breakdown"
 Enter
 
-Sleep 3s
-
-Type "agent-usage daily codex"
-Enter
-
-Sleep 2s
+Sleep 5s

@@ -1,17 +1,17 @@
 Output demo/find-session.gif
 
 Set Shell "bash"
-Set FontSize 18
-Set Width 1280
-Set Height 760
+Set FontSize 15
+Set Width 1680
+Set Height 980
 Set Theme "Catppuccin Mocha"
 Set CursorBlink false
 Set TypingSpeed 35ms
 
-Type "find-session -g --agents codex -n 8"
+Type "python3 -m coding_agent_tools.find_session -g --agents codex -n 4"
 Enter
 
-Sleep 3s
+Sleep 4s
 
 Enter
 

@@ -15,6 +15,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+
+    RICH_AVAILABLE = True
+except ImportError:
+    box = None
+    Console = None
+    Table = None
+    RICH_AVAILABLE = False
+
 
 SOURCE_ALIASES = {
     "claude": "claude",
@@ -382,6 +394,74 @@ def print_table(
         "cost": fmt_cost(totals.cost),
     }
 
+    labels = col_labels or {}
+    period_header = {"daily": "Date", "weekly": "Week", "monthly": "Month"}[mode]
+    cache5_title = labels.get("col5", "Cache")
+    cache5_sub = labels.get("col5_sub", "Create")
+    cache6_title = labels.get("col6", "Cache")
+    cache6_sub = labels.get("col6_sub", "Read")
+
+    if RICH_AVAILABLE and sys.stdout.isatty() and not os.getenv("AGENT_USAGE_PLAIN"):
+        assert Console is not None and Table is not None and box is not None
+
+        def stacked_header(primary: str, secondary: str) -> str:
+            if primary and secondary:
+                return f"{primary}\n{secondary}"
+            return primary or secondary or ""
+
+        console = Console()
+        table = Table(
+            title=title,
+            box=box.ROUNDED,
+            show_header=True,
+            header_style="bold cyan",
+            show_lines=True,
+        )
+
+        table.add_column(period_header, style="green", no_wrap=True)
+        table.add_column("Models", style="white", max_width=70, overflow="fold")
+        table.add_column(input_header, justify="right", style="magenta")
+        table.add_column("Output", justify="right", style="magenta")
+        table.add_column(stacked_header(cache5_title, cache5_sub), justify="right", style="blue")
+        table.add_column(stacked_header(cache6_title, cache6_sub), justify="right", style="blue")
+        table.add_column("Total\nTokens", justify="right", style="yellow")
+        table.add_column("Cost\n(USD)", justify="right", style="bright_green")
+
+        for entry in entries:
+            etype = entry.get("type")
+            if etype == "sep":
+                table.add_section()
+                continue
+            if etype == "period_tail":
+                table.add_row(entry["period"], "", "", "", "", "", "", "", style="dim")
+                continue
+            table.add_row(
+                entry["period"],
+                entry["model"],
+                entry["input"],
+                entry["output"],
+                entry["cache_w"],
+                entry["cache_r"],
+                entry["total"],
+                entry["cost"],
+            )
+
+        table.add_section()
+        table.add_row(
+            total_row["period"],
+            total_row["model"],
+            total_row["input"],
+            total_row["output"],
+            total_row["cache_w"],
+            total_row["cache_r"],
+            total_row["total"],
+            total_row["cost"],
+            style="bold",
+        )
+
+        console.print(table)
+        return
+
     data_rows = [e for e in entries if e.get("type") == "data"] + [total_row]
     period_rows = [e for e in entries if e.get("type") in ("data", "period_tail")]
 
@@ -431,13 +511,6 @@ def print_table(
             f"| {cost:>{cost_w}} |"
         )
         return tone(segment, color) if header else segment
-
-    labels = col_labels or {}
-    period_header = {"daily": "Date", "weekly": "Week", "monthly": "Month"}[mode]
-    cache5_title = labels.get("col5", "Cache")
-    cache5_sub = labels.get("col5_sub", "Create")
-    cache6_title = labels.get("col6", "Cache")
-    cache6_sub = labels.get("col6_sub", "Read")
 
     print(f"\n{title}")
     print(hline("+", "+", "+"))
