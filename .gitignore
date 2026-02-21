@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-demo/*.gif
+demo/*
 !demo/find-session.gif
 !demo/agent-usage.gif
+scripts/
