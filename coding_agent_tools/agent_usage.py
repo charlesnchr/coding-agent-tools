@@ -53,7 +53,7 @@ class ModelBucket:
 
 class PricingResolver:
     def __init__(self) -> None:
-        self._prices = self._fetch_litellm_prices()
+        self._prices, self._fetch_error = self._fetch_litellm_prices()
         self._lookup_cache: dict[tuple[str, str], Optional[dict]] = {}
         self._model_aliases = {
             # Codex aliases
@@ -64,6 +64,23 @@ class PricingResolver:
             "gemini-3.1-pro-preview-customtools": "gemini-2.5-pro",
             "antigravity-claude-opus-4-6-thinking": "claude-opus-4-1",
         }
+
+    def pricing_banner(self) -> str:
+        if self._prices:
+            return (
+                "💡 Pricing source: LiteLLM live registry "
+                f"({len(self._prices):,} model entries). "
+                "Unknown models fall back to observed/source-reported cost."
+            )
+        if self._fetch_error:
+            return (
+                "⚠ Pricing source: LiteLLM unavailable "
+                f"({self._fetch_error}). Using observed/source-reported cost only."
+            )
+        return (
+            "⚠ Pricing source: LiteLLM unavailable. "
+            "Using observed/source-reported cost only."
+        )
 
     def estimate_cost(
         self,
@@ -176,13 +193,15 @@ class PricingResolver:
         }
 
     @staticmethod
-    def _fetch_litellm_prices() -> dict:
+    def _fetch_litellm_prices() -> tuple[dict, Optional[str]]:
         try:
             with urllib.request.urlopen(LITELLM_URL, timeout=15) as response:
                 data = json.loads(response.read())
-                return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
+                if isinstance(data, dict):
+                    return data, None
+                return {}, "unexpected pricing payload"
+        except Exception as exc:
+            return {}, str(exc)
 
 
 def to_period(ts: datetime, mode: str) -> str:
@@ -386,7 +405,7 @@ def print_table(
     tw = max(len("Tokens"), max(len(e["total"]) for e in all_data))
     cow = max(len("(USD)"), max(len(e["cost"]) for e in all_data))
 
-    use_color = sys.stdout.isatty() and not os.getenv("NO_COLOR")
+    use_color = not os.getenv("NO_COLOR")
     dim = "\033[90m" if use_color else ""
     cyan = "\033[36m" if use_color else ""
     reset = "\033[39m" if use_color else ""
@@ -1005,27 +1024,54 @@ Examples:
 def main() -> None:
     mode, breakdown, source_filter = parse_args(sys.argv[1:])
     pricing = PricingResolver()
+    mode_title = mode.capitalize()
+
+    print(pricing.pricing_banner())
 
     if should_show("claude", source_filter):
         usage, totals = collect_claude(mode, pricing)
-        print_table("Claude Code Usage", usage, totals, mode, breakdown)
+        print_table(
+            f"📊 Claude Code Token Usage Report - {mode_title} (From JSONL Sessions)",
+            usage,
+            totals,
+            mode,
+            breakdown,
+        )
 
     if should_show("codex", source_filter):
         usage, totals = collect_codex(mode, pricing)
-        print_table("Codex Usage", usage, totals, mode, breakdown)
+        print_table(
+            f"📊 Codex Token Usage Report - {mode_title} (From JSONL Sessions)",
+            usage,
+            totals,
+            mode,
+            breakdown,
+        )
 
     if should_show("openclaw", source_filter):
         usage, totals = collect_openclaw(mode, pricing)
-        print_table("OpenClaw Usage", usage, totals, mode, breakdown)
+        print_table(
+            f"📊 OpenClaw Token Usage Report - {mode_title} (From JSONL Sessions)",
+            usage,
+            totals,
+            mode,
+            breakdown,
+        )
 
     if should_show("opencode", source_filter):
         usage, totals = collect_opencode(mode, pricing)
-        print_table("OpenCode Usage", usage, totals, mode, breakdown)
+        print_table(
+            f"📊 OpenCode Token Usage Report - {mode_title} (From SQLite DB)",
+            usage,
+            totals,
+            mode,
+            breakdown,
+        )
 
     if should_show("openwhispr", source_filter):
         usage, totals = collect_openwhispr(mode)
         print_table(
-            "OpenWhispr Usage",
+            f"📊 OpenWhispr Token Usage Report - {mode_title} (From SQLite DB)",
             usage,
             totals,
             mode,
