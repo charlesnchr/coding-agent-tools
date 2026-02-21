@@ -358,6 +358,7 @@ def print_table(
                         "cache_r": fmt_int(item.cache_read),
                         "total": fmt_int(item.total),
                         "cost": fmt_cost(item.cost),
+                        "faded": True,
                     }
                 )
             entries.append({"type": "sep"})
@@ -408,6 +409,7 @@ def print_table(
     use_color = not os.getenv("NO_COLOR")
     dim = "\033[90m" if use_color else ""
     cyan = "\033[36m" if use_color else ""
+    faint = "\033[2m" if use_color else ""
     reset = "\033[39m" if use_color else ""
 
     def hl(l: str, m: str, r: str) -> str:
@@ -457,6 +459,7 @@ def print_table(
         elif e["type"] == "date_cont":
             print(rl(e["date"], "", "", "", "", "", "", ""))
         elif e["type"] == "data":
+            row_tone = faint if e.get("faded") else ""
             print(
                 rl(
                     e["date"],
@@ -467,6 +470,7 @@ def print_table(
                     e["cache_r"],
                     e["total"],
                     e["cost"],
+                    row_tone,
                 )
             )
 
