@@ -150,6 +150,9 @@ Use these as README assets, release previews, or social clips.
 
 ![find-session demo](demo/find-session.gif)
 
+<br/>
+<br/>
+
 ### `agent-usage` demo
 
 ![agent-usage demo](demo/agent-usage.gif)

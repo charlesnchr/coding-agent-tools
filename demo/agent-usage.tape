@@ -8,7 +8,7 @@ Set Theme "Catppuccin Mocha"
 Set CursorBlink false
 Set TypingSpeed 35ms
 
-Type "python3 -m coding_agent_tools.agent_usage monthly codex opencode --breakdown"
+Type "agent-usage monthly codex opencode --breakdown"
 Enter
 
 Sleep 5s

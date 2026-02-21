@@ -8,11 +8,7 @@ Set Theme "Catppuccin Mocha"
 Set CursorBlink false
 Set TypingSpeed 35ms
 
-Type "python3 -m coding_agent_tools.find_session -g --agents codex -n 4"
+Type "find-session -g --agents codex -n 4"
 Enter
 
 Sleep 4s
-
-Enter
-
-Sleep 1s
