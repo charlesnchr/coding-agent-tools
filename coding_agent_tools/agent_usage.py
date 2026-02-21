@@ -410,7 +410,7 @@ def print_table(
     dim = "\033[90m" if use_color else ""
     cyan = "\033[36m" if use_color else ""
     faint = "\033[2m" if use_color else ""
-    reset = "\033[39m" if use_color else ""
+    reset = "\033[0m" if use_color else ""
 
     def hl(l: str, m: str, r: str) -> str:
         segs = [f"{'─' * (w + 2)}" for w in (dw, mw, iw, ow, cww, crw, tw, cow)]
