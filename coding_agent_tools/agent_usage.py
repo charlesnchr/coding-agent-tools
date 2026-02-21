@@ -275,121 +275,120 @@ def print_table(
     input_header: str = "Input",
 ) -> None:
     if not usage_by_period:
-        print(f"\n{title}\nNo data found.")
+        print(f"\n{title}: no data found.")
         return
+
+    # Match allusage.py table styling exactly
+    DIM = "\033[90m"
+    CYAN = "\033[36m"
+    RESET = "\033[39m"
 
     entries = []
     for period in sorted(usage_by_period.keys()):
         parts = period.split("-")
         year = parts[0]
-        period_tail = ""
+        month_day = ""
         if mode == "daily":
-            period_tail = f"{parts[1]}-{parts[2]}" if len(parts) == 3 else ""
+            month_day = f"{parts[1]}-{parts[2]}" if len(parts) == 3 else ""
         elif mode in ("monthly", "weekly"):
-            period_tail = parts[1] if len(parts) > 1 else ""
+            month_day = parts[1] if len(parts) > 1 else ""
 
         models = sorted(usage_by_period[period].keys())
 
         if not breakdown and len(models) > 1:
-            agg = ModelBucket()
-            for name in models:
-                item = usage_by_period[period][name]
-                agg.input += item.input
-                agg.output += item.output
-                agg.cache_read += item.cache_read
-                agg.cache_write += item.cache_write
-                agg.total += item.total
-                agg.cost += item.cost
+            p = {
+                "input": sum(usage_by_period[period][m].input for m in models),
+                "output": sum(usage_by_period[period][m].output for m in models),
+                "cache_rd": sum(usage_by_period[period][m].cache_read for m in models),
+                "cache_wr": sum(usage_by_period[period][m].cache_write for m in models),
+                "total": sum(usage_by_period[period][m].total for m in models),
+                "cost": sum(usage_by_period[period][m].cost for m in models),
+            }
             entries.append(
                 {
                     "type": "data",
                     "date": year,
                     "model": f"- Multiple ({len(models)})",
-                    "input": fmt_int(agg.input),
-                    "output": fmt_int(agg.output),
-                    "cache_w": fmt_int(agg.cache_write),
-                    "cache_r": fmt_int(agg.cache_read),
-                    "total": fmt_int(agg.total),
-                    "cost": fmt_cost(agg.cost),
+                    "input": fmt_int(p["input"]),
+                    "output": fmt_int(p["output"]),
+                    "cache_wr": fmt_int(p["cache_wr"]),
+                    "cache_rd": fmt_int(p["cache_rd"]),
+                    "total": fmt_int(p["total"]),
+                    "cost": fmt_cost(p["cost"]),
                 }
             )
-            if period_tail:
-                entries.append({"type": "date_cont", "date": period_tail})
+            if month_day:
+                entries.append({"type": "date_cont", "date": month_day})
             entries.append({"type": "sep"})
-            continue
 
-        if breakdown and len(models) > 1:
-            agg = ModelBucket()
-            for name in models:
-                item = usage_by_period[period][name]
-                agg.input += item.input
-                agg.output += item.output
-                agg.cache_read += item.cache_read
-                agg.cache_write += item.cache_write
-                agg.total += item.total
-                agg.cost += item.cost
+        elif breakdown and len(models) > 1:
+            p = {
+                "input": sum(usage_by_period[period][m].input for m in models),
+                "output": sum(usage_by_period[period][m].output for m in models),
+                "cache_rd": sum(usage_by_period[period][m].cache_read for m in models),
+                "cache_wr": sum(usage_by_period[period][m].cache_write for m in models),
+                "total": sum(usage_by_period[period][m].total for m in models),
+                "cost": sum(usage_by_period[period][m].cost for m in models),
+            }
             entries.append(
                 {
                     "type": "data",
                     "date": year,
                     "model": "",
-                    "input": fmt_int(agg.input),
-                    "output": fmt_int(agg.output),
-                    "cache_w": fmt_int(agg.cache_write),
-                    "cache_r": fmt_int(agg.cache_read),
-                    "total": fmt_int(agg.total),
-                    "cost": fmt_cost(agg.cost),
+                    "input": fmt_int(p["input"]),
+                    "output": fmt_int(p["output"]),
+                    "cache_wr": fmt_int(p["cache_wr"]),
+                    "cache_rd": fmt_int(p["cache_rd"]),
+                    "total": fmt_int(p["total"]),
+                    "cost": fmt_cost(p["cost"]),
                 }
             )
-            if period_tail:
-                entries.append({"type": "date_cont", "date": period_tail})
+            if month_day:
+                entries.append({"type": "date_cont", "date": month_day})
             entries.append({"type": "sep"})
-            for idx, name in enumerate(models):
-                item = usage_by_period[period][name]
-                marker = "└─" if idx == len(models) - 1 else "├─"
+            for idx, model_name in enumerate(models):
+                item = usage_by_period[period][model_name]
                 entries.append(
                     {
                         "type": "data",
-                        "date": f"  {marker}",
-                        "model": model_label(name, item.provider),
+                        "date": f"  {'└─' if idx == len(models) - 1 else '├─'}",
+                        "model": model_label(model_name, item.provider),
                         "input": fmt_int(item.input),
                         "output": fmt_int(item.output),
-                        "cache_w": fmt_int(item.cache_write),
-                        "cache_r": fmt_int(item.cache_read),
+                        "cache_wr": fmt_int(item.cache_write),
+                        "cache_rd": fmt_int(item.cache_read),
                         "total": fmt_int(item.total),
                         "cost": fmt_cost(item.cost),
-                        "faded": True,
                     }
                 )
             entries.append({"type": "sep"})
-            continue
-
-        model_name = models[0]
-        item = usage_by_period[period][model_name]
-        entries.append(
-            {
-                "type": "data",
-                "date": year,
-                "model": f"- {model_label(model_name, item.provider)}",
-                "input": fmt_int(item.input),
-                "output": fmt_int(item.output),
-                "cache_w": fmt_int(item.cache_write),
-                "cache_r": fmt_int(item.cache_read),
-                "total": fmt_int(item.total),
-                "cost": fmt_cost(item.cost),
-            }
-        )
-        if period_tail:
-            entries.append({"type": "date_cont", "date": period_tail})
-        entries.append({"type": "sep"})
+        else:
+            model_name = models[0]
+            item = usage_by_period[period][model_name]
+            entries.append(
+                {
+                    "type": "data",
+                    "date": year,
+                    "model": f"- {model_label(model_name, item.provider)}",
+                    "input": fmt_int(item.input),
+                    "output": fmt_int(item.output),
+                    "cache_wr": fmt_int(item.cache_write),
+                    "cache_rd": fmt_int(item.cache_read),
+                    "total": fmt_int(item.total),
+                    "cost": fmt_cost(item.cost),
+                }
+            )
+            if month_day:
+                entries.append({"type": "date_cont", "date": month_day})
+            entries.append({"type": "sep"})
 
     total_row = {
         "date": "Total",
         "model": "",
         "input": fmt_int(totals.input),
         "output": fmt_int(totals.output),
-        "cache_w": fmt_int(totals.cache_write),
-        "cache_r": fmt_int(totals.cache_read),
+        "cache_wr": fmt_int(totals.cache_write),
+        "cache_rd": fmt_int(totals.cache_read),
         "total": fmt_int(totals.total),
         "cost": fmt_cost(totals.cost),
     }
@@ -401,56 +400,40 @@ def print_table(
     mw = max(20, max((len(e["model"]) for e in all_data), default=20))
     iw = max(len(input_header), max(len(e["input"]) for e in all_data))
     ow = max(len("Output"), max(len(e["output"]) for e in all_data))
-    cww = max(len("Create"), max(len(e["cache_w"]) for e in all_data))
-    crw = max(len("Read"), max(len(e["cache_r"]) for e in all_data))
+    cww = max(len("Create"), max(len(e["cache_wr"]) for e in all_data))
+    crw = max(len("Read"), max(len(e["cache_rd"]) for e in all_data))
     tw = max(len("Tokens"), max(len(e["total"]) for e in all_data))
     cow = max(len("(USD)"), max(len(e["cost"]) for e in all_data))
 
-    use_color = not os.getenv("NO_COLOR")
-    dim = "\033[90m" if use_color else ""
-    cyan = "\033[36m" if use_color else ""
-    faint = "\033[2m" if use_color else ""
-    reset = "\033[0m" if use_color else ""
-
     def hl(l: str, m: str, r: str) -> str:
-        segs = [f"{'─' * (w + 2)}" for w in (dw, mw, iw, ow, cww, crw, tw, cow)]
-        return f"{dim}{l}{m.join(segs)}{r}{reset}"
+        s = [f"{'─' * (w + 2)}" for w in (dw, mw, iw, ow, cww, crw, tw, cow)]
+        return f"{DIM}{l}{m.join(s)}{r}{RESET}"
 
-    def rl(
-        d: str,
-        m: str,
-        i: str,
-        o: str,
-        cw: str,
-        cr: str,
-        t: str,
-        c: str,
-        color: str = "",
-    ) -> str:
-        ec = reset if color else ""
+    def rl(d: str, m: str, i: str, o: str, cw: str, cr: str, t: str, c: str, color: str = "") -> str:
+        ec = RESET if color else ""
         return (
-            f"{dim}│{reset}{color} {d.ljust(dw)} {ec}"
-            f"{dim}│{reset}{color} {m.ljust(mw)} {ec}"
-            f"{dim}│{reset}{color} {i.rjust(iw)} {ec}"
-            f"{dim}│{reset}{color} {o.rjust(ow)} {ec}"
-            f"{dim}│{reset}{color} {cw.rjust(cww)} {ec}"
-            f"{dim}│{reset}{color} {cr.rjust(crw)} {ec}"
-            f"{dim}│{reset}{color} {t.rjust(tw)} {ec}"
-            f"{dim}│{reset}{color} {c.rjust(cow)} {ec}{dim}│{reset}"
+            f"{DIM}│{RESET}{color} {d.ljust(dw)} {ec}"
+            f"{DIM}│{RESET}{color} {m.ljust(mw)} {ec}"
+            f"{DIM}│{RESET}{color} {i.rjust(iw)} {ec}"
+            f"{DIM}│{RESET}{color} {o.rjust(ow)} {ec}"
+            f"{DIM}│{RESET}{color} {cw.rjust(cww)} {ec}"
+            f"{DIM}│{RESET}{color} {cr.rjust(crw)} {ec}"
+            f"{DIM}│{RESET}{color} {t.rjust(tw)} {ec}"
+            f"{DIM}│{RESET}{color} {c.rjust(cow)} {ec}{DIM}│{RESET}"
         )
 
     col1 = {"weekly": "Week", "monthly": "Month"}.get(mode, "Date")
-    labels = col_labels or {}
-    h_input = labels.get("input", input_header)
-    h_col5 = labels.get("col5", "Cache")
-    h_col5_sub = labels.get("col5_sub", "Create")
-    h_col6 = labels.get("col6", "Cache")
-    h_col6_sub = labels.get("col6_sub", "Read")
+    lb = col_labels or {}
+    h_input = lb.get("input", input_header)
+    h_col5 = lb.get("col5", "Cache")
+    h_col5_sub = lb.get("col5_sub", "Create")
+    h_col6 = lb.get("col6", "Cache")
+    h_col6_sub = lb.get("col6_sub", "Read")
 
     print(f"\n{title}")
     print(f"\n{hl('┌', '┬', '┐')}")
-    print(rl(col1, "Models", h_input, "Output", h_col5, h_col6, "Total", "Cost", cyan))
-    print(rl("", "", "", "", h_col5_sub, h_col6_sub, "Tokens", "(USD)", cyan))
+    print(rl(col1, "Models", h_input, "Output", h_col5, h_col6, "Total", "Cost", CYAN))
+    print(rl("", "", "", "", h_col5_sub, h_col6_sub, "Tokens", "(USD)", CYAN))
     print(hl("├", "┼", "┤"))
 
     for e in entries:
@@ -459,18 +442,16 @@ def print_table(
         elif e["type"] == "date_cont":
             print(rl(e["date"], "", "", "", "", "", "", ""))
         elif e["type"] == "data":
-            row_tone = faint if e.get("faded") else ""
             print(
                 rl(
                     e["date"],
                     e["model"],
                     e["input"],
                     e["output"],
-                    e["cache_w"],
-                    e["cache_r"],
+                    e["cache_wr"],
+                    e["cache_rd"],
                     e["total"],
                     e["cost"],
-                    row_tone,
                 )
             )
 
@@ -480,8 +461,8 @@ def print_table(
             total_row["model"],
             total_row["input"],
             total_row["output"],
-            total_row["cache_w"],
-            total_row["cache_r"],
+            total_row["cache_wr"],
+            total_row["cache_rd"],
             total_row["total"],
             total_row["cost"],
         )
