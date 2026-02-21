@@ -133,10 +133,18 @@ brew install vhs
 How it works:
 
 - `vhs` launches a shell subprocess
-- runs scripted commands (`--help` or sample queries)
+- runs scripted commands (sample queries and real command output)
 - renders a styled terminal recording directly to GIF
 
 Use these as README assets, release previews, or social clips.
+
+### `find-session` demo
+
+![find-session demo](demo/find-session.gif)
+
+### `agent-usage` demo
+
+![agent-usage demo](demo/agent-usage.gif)
 
 ## Development
 

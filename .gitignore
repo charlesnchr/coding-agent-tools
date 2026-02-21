@@ -6,3 +6,5 @@ dist/
 build/
 *.egg-info/
 demo/*.gif
+!demo/find-session.gif
+!demo/agent-usage.gif
