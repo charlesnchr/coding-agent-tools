@@ -6,7 +6,9 @@ from __future__ import annotations
 import glob
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import urllib.request
 from collections import defaultdict
@@ -19,6 +21,7 @@ from typing import Optional
 SOURCE_ALIASES = {
     "claude": "claude",
     "cc": "claude",
+    "claudecode": "claude",
     "codex": "codex",
     "cx": "codex",
     "openclaw": "openclaw",
@@ -995,7 +998,7 @@ Usage:
   agent-usage [daily|weekly|monthly] [--breakdown] [sources...]
 
 Sources:
-  claude|cc, codex|cx, openclaw|oc|claw, opencode|oe|code, openwhispr|ow|whispr
+  claude|cc|claudecode, codex|cx, openclaw|oc|claw, opencode|oe|code, openwhispr|ow|whispr
 
 Examples:
   agent-usage
@@ -1006,22 +1009,57 @@ Examples:
     raise SystemExit(code)
 
 
+def run_ccusage_native(mode: str, breakdown: bool) -> bool:
+    """Run Claude usage via ccusage (preferred native source)."""
+    cmd: Optional[list[str]] = None
+
+    if shutil.which("ccusage"):
+        cmd = ["ccusage", mode]
+    elif shutil.which("npx"):
+        cmd = ["npx", "--yes", "ccusage@latest", mode]
+
+    if cmd is None:
+        print(
+            "⚠ Claude section skipped: install `ccusage` or Node.js with `npx`.",
+            file=sys.stderr,
+        )
+        return False
+
+    if breakdown:
+        cmd.append("--breakdown")
+
+    try:
+        result = subprocess.run(cmd)
+    except OSError as exc:
+        print(f"⚠ Claude section skipped: failed to run ccusage ({exc}).", file=sys.stderr)
+        return False
+
+    if result.returncode != 0:
+        print(
+            f"⚠ Claude section skipped: ccusage exited with code {result.returncode}.",
+            file=sys.stderr,
+        )
+        return False
+
+    return True
+
+
 def main() -> None:
     mode, breakdown, source_filter = parse_args(sys.argv[1:])
     pricing = PricingResolver()
     mode_title = mode.capitalize()
 
-    print(pricing.pricing_banner())
+    needs_litellm_notice = (
+        should_show("codex", source_filter)
+        or should_show("openclaw", source_filter)
+        or should_show("opencode", source_filter)
+    )
+
+    if needs_litellm_notice:
+        print(pricing.pricing_banner(), flush=True)
 
     if should_show("claude", source_filter):
-        usage, totals = collect_claude(mode, pricing)
-        print_table(
-            f"📊 Claude Code Token Usage Report - {mode_title} (From JSONL Sessions)",
-            usage,
-            totals,
-            mode,
-            breakdown,
-        )
+        run_ccusage_native(mode, breakdown)
 
     if should_show("codex", source_filter):
         usage, totals = collect_codex(mode, pricing)

@@ -95,11 +95,19 @@ agent-usage monthly opencode codex
 
 ### Sources and aliases
 
-- `claude` / `cc`
+- `claude` / `cc` / `claudecode` (native `ccusage`)
 - `codex` / `cx`
 - `openclaw` / `oc` / `claw`
 - `opencode` / `oe` / `code`
 - `openwhispr` / `ow` / `whispr`
+
+### Claude source = native ccusage
+
+For Claude data, `agent-usage` now delegates directly to `ccusage` (no custom reimplementation).
+
+- Uses `ccusage` if installed
+- Otherwise falls back to `npx --yes ccusage@latest`
+- Requires Node.js + `npx` unless you already have `ccusage` installed
 
 ### Cost model
 
@@ -110,7 +118,7 @@ agent-usage monthly opencode codex
 
 ## Data sources
 
-- Claude Code: `~/.claude/projects/*/*.jsonl`
+- Claude Code: native `ccusage`
 - Codex: `~/.codex/sessions/**/rollout-*.jsonl`
 - OpenCode: `~/.local/share/opencode/opencode.db`
 - OpenClaw: `~/.openclaw/agents/*/sessions/*.jsonl`
