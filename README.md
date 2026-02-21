@@ -44,9 +44,9 @@ agent-usage monthly codex opencode    # specific sources only
 
 ![agent-usage](demo/agent-usage.gif)
 
-## Supported agents
+## Supported software
 
-| Agent | Session search | Usage analytics | Data location |
+| Software | Session search | Usage analytics | Data location |
 |-------|:-:|:-:|---|
 | Claude Code | yes | yes (via ccusage) | `~/.claude/projects/*/*.jsonl` |
 | Codex | yes | yes | `~/.codex/sessions/**/rollout-*.jsonl` |
