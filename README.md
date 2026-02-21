@@ -1,57 +1,86 @@
 # CodingAgentTools
 
-`CodingAgentTools` is a focused toolbox for local AI coding workflows.
+`coding-agent-tools` is a practical CLI bundle for local coding-agent workflows.
 
-It currently ships two high-leverage commands:
+It currently provides:
 
-- `find-session`: search and resume sessions across Claude Code, Codex, and OpenCode.
-- `agent-usage`: unified usage + estimated cost reporting across Claude Code, Codex, OpenClaw, OpenCode, and OpenWhispr.
+- `find-session`: search and resume sessions across Claude Code, Codex, and OpenCode
+- `agent-usage`: unified usage and estimated USD-equivalent cost across Claude Code, Codex, OpenClaw, OpenCode, and OpenWhispr
 
 ## Why this repo exists
 
-This repository consolidates tools that were previously split across multiple projects/scripts:
+This consolidates earlier standalone tools into one package:
 
-- `find-session` (now embedded here)
+- `find-session` (now here)
 - local `allusage` script (now `agent-usage`)
 
-The goal is one installable package, one docs surface, and one place for improvements.
+The goal is one install, one command surface, one place to improve.
 
 ## Install
+
+From PyPI (recommended):
+
+```bash
+uv tool install coding-agent-tools
+```
+
+Alternative:
+
+```bash
+pipx install coding-agent-tools
+# or
+pip install coding-agent-tools
+```
+
+From source:
 
 ```bash
 uv tool install .
 ```
 
-or with pip:
+## Quickstart
 
 ```bash
-pip install .
+# Find sessions in current project across all supported agents
+find-session "auth,refactor"
+
+# Search all projects
+find-session -g
+
+# Usage report (daily default)
+agent-usage
+
+# Weekly report with per-model expansion
+agent-usage weekly --breakdown
 ```
 
-## Command: find-session
+## `find-session`
 
-Search and resume sessions across agents from one interface.
+Unified session search with interactive selection, resume, and export/copy actions.
 
 ```bash
 # Search current project
-find-session "auth,refactor"
+find-session "redis,bug"
 
-# Search across all projects
+# Search all projects
 find-session -g
 
 # Limit to one agent
-find-session "redis" --agents codex
+find-session "checkpoint" --agents codex
 ```
 
-Supported agents:
+### Preview behavior
 
-- Claude Code (`~/.claude/projects/*.jsonl`)
-- Codex (`~/.codex/sessions/**/rollout-*.jsonl`)
-- OpenCode (`~/.local/share/opencode/opencode.db`)
+Session previews now include both ends of user intent:
 
-## Command: agent-usage
+- `First: ...`
+- `Last: ...`
 
-Show token usage and estimated USD-equivalent cost by period.
+If only one meaningful user message is found, it displays as `First/Last: ...`.
+
+## `agent-usage`
+
+Token usage and estimated cost tables by period.
 
 ```bash
 # Daily usage for all sources
@@ -60,7 +89,7 @@ agent-usage
 # Weekly with per-model breakdown
 agent-usage weekly --breakdown
 
-# Only OpenCode + Codex
+# Restrict sources
 agent-usage monthly opencode codex
 ```
 
@@ -72,19 +101,42 @@ agent-usage monthly opencode codex
 - `opencode` / `oe` / `code`
 - `openwhispr` / `ow` / `whispr`
 
-### Pricing model
+### Cost model
 
-`agent-usage` estimates cost from token counts using live LiteLLM pricing metadata.
+`agent-usage` estimates costs from token counts using live LiteLLM pricing metadata.
 
-- If a source already reports non-zero cost, estimated pricing is still preferred when model pricing is available.
-- This avoids misleading `0` totals for subscription-backed usage (for example OpenCode sessions routed through subscription plans).
-- For models not present in the pricing registry, the tool falls back to observed/source-reported cost when available.
+- This avoids misleading `$0` totals for subscription-backed traffic (especially OpenCode).
+- If a model is missing in the pricing registry, it falls back to source-observed cost when present.
 
-## References
+## Data sources
 
-- `ccusage` (inspiration for usage/cost reporting style): https://github.com/ryoppippi/ccusage
-- `claude-code-tools` (Cloud/Claude Code tools reference and prior consolidation work): https://github.com/charlesnchr/claude-code-tools
-- LiteLLM model pricing registry: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
+- Claude Code: `~/.claude/projects/*/*.jsonl`
+- Codex: `~/.codex/sessions/**/rollout-*.jsonl`
+- OpenCode: `~/.local/share/opencode/opencode.db`
+- OpenClaw: `~/.openclaw/agents/*/sessions/*.jsonl`
+- OpenWhispr: `~/Library/Application Support/open-whispr/transcriptions.db`
+
+## Beautiful terminal demos (yes, via subprocess recording)
+
+Yes: you can generate polished terminal renders by recording commands as subprocesses.
+
+This repo includes ready-to-run VHS tapes in `demo/`:
+
+```bash
+# macOS
+brew install vhs
+
+# render animated gifs from deterministic command scripts
+./scripts/render-demos.sh
+```
+
+How it works:
+
+- `vhs` launches a shell subprocess
+- runs scripted commands (`--help` or sample queries)
+- renders a styled terminal recording directly to GIF
+
+Use these as README assets, release previews, or social clips.
 
 ## Development
 
@@ -93,6 +145,12 @@ python3 -m pip install -e .
 find-session --help
 agent-usage --help
 ```
+
+## References
+
+- `ccusage` (inspiration for usage/cost reporting style): https://github.com/ryoppippi/ccusage
+- `claude-code-tools` (Cloud/Claude Code tools reference and prior consolidation work): https://github.com/charlesnchr/claude-code-tools
+- LiteLLM model pricing registry: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
 
 ## License
 

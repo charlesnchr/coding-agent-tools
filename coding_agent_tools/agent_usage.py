@@ -252,15 +252,33 @@ def print_table(
     totals: ModelBucket,
     mode: str,
     breakdown: bool,
+    col_labels: Optional[dict[str, str]] = None,
     input_header: str = "Input",
 ) -> None:
     if not usage_by_period:
         print(f"\n{title}\nNo data found.")
         return
 
-    rows = []
+    dim = "\033[90m"
+    cyan = "\033[36m"
+    reset = "\033[39m"
+    use_color = sys.stdout.isatty() and not os.getenv("NO_COLOR")
+
+    def tone(text: str, color: str) -> str:
+        return f"{color}{text}{reset}" if use_color else text
+
+    entries = []
     for period in sorted(usage_by_period.keys()):
+        parts = period.split("-")
+        period_head = parts[0]
+        period_tail = ""
+        if mode == "daily" and len(parts) == 3:
+            period_tail = f"{parts[1]}-{parts[2]}"
+        elif mode in ("monthly", "weekly") and len(parts) > 1:
+            period_tail = parts[1]
+
         models = sorted(usage_by_period[period].keys())
+
         if not breakdown and len(models) > 1:
             agg = ModelBucket()
             for name in models:
@@ -271,10 +289,11 @@ def print_table(
                 agg.cache_write += item.cache_write
                 agg.total += item.total
                 agg.cost += item.cost
-            rows.append(
+            entries.append(
                 {
-                    "period": period,
-                    "model": f"multiple ({len(models)})",
+                    "type": "data",
+                    "period": period_head,
+                    "model": f"- multiple ({len(models)})",
                     "input": fmt_int(agg.input),
                     "output": fmt_int(agg.output),
                     "cache_w": fmt_int(agg.cache_write),
@@ -283,6 +302,9 @@ def print_table(
                     "cost": fmt_cost(agg.cost),
                 }
             )
+            if period_tail:
+                entries.append({"type": "period_tail", "period": period_tail})
+            entries.append({"type": "sep"})
             continue
 
         if breakdown and len(models) > 1:
@@ -295,10 +317,11 @@ def print_table(
                 agg.cache_write += item.cache_write
                 agg.total += item.total
                 agg.cost += item.cost
-            rows.append(
+            entries.append(
                 {
-                    "period": period,
-                    "model": "all models",
+                    "type": "data",
+                    "period": period_head,
+                    "model": "",
                     "input": fmt_int(agg.input),
                     "output": fmt_int(agg.output),
                     "cache_w": fmt_int(agg.cache_write),
@@ -307,12 +330,17 @@ def print_table(
                     "cost": fmt_cost(agg.cost),
                 }
             )
-            for name in models:
+            if period_tail:
+                entries.append({"type": "period_tail", "period": period_tail})
+            entries.append({"type": "sep"})
+            for idx, name in enumerate(models):
                 item = usage_by_period[period][name]
-                rows.append(
+                marker = "`-" if idx == len(models) - 1 else "|-"
+                entries.append(
                     {
-                        "period": "",
-                        "model": "- " + model_label(name, item.provider),
+                        "type": "data",
+                        "period": f"  {marker}",
+                        "model": model_label(name, item.provider),
                         "input": fmt_int(item.input),
                         "output": fmt_int(item.output),
                         "cache_w": fmt_int(item.cache_write),
@@ -321,14 +349,16 @@ def print_table(
                         "cost": fmt_cost(item.cost),
                     }
                 )
+            entries.append({"type": "sep"})
             continue
 
         model_name = models[0]
         item = usage_by_period[period][model_name]
-        rows.append(
+        entries.append(
             {
-                "period": period,
-                "model": model_label(model_name, item.provider),
+                "type": "data",
+                "period": period_head,
+                "model": f"- {model_label(model_name, item.provider)}",
                 "input": fmt_int(item.input),
                 "output": fmt_int(item.output),
                 "cache_w": fmt_int(item.cache_write),
@@ -337,78 +367,141 @@ def print_table(
                 "cost": fmt_cost(item.cost),
             }
         )
+        if period_tail:
+            entries.append({"type": "period_tail", "period": period_tail})
+        entries.append({"type": "sep"})
 
-    rows.append(
-        {
-            "period": "TOTAL",
-            "model": "",
-            "input": fmt_int(totals.input),
-            "output": fmt_int(totals.output),
-            "cache_w": fmt_int(totals.cache_write),
-            "cache_r": fmt_int(totals.cache_read),
-            "total": fmt_int(totals.total),
-            "cost": fmt_cost(totals.cost),
-        }
-    )
-
-    period_name = {"daily": "Date", "weekly": "Week", "monthly": "Month"}[mode]
-    widths = {
-        "period": max(len(period_name), max(len(r["period"]) for r in rows)),
-        "model": max(len("Model"), max(len(r["model"]) for r in rows)),
-        "input": max(len(input_header), max(len(r["input"]) for r in rows)),
-        "output": max(len("Output"), max(len(r["output"]) for r in rows)),
-        "cache_w": max(len("CacheW"), max(len(r["cache_w"]) for r in rows)),
-        "cache_r": max(len("CacheR"), max(len(r["cache_r"]) for r in rows)),
-        "total": max(len("Total"), max(len(r["total"]) for r in rows)),
-        "cost": max(len("Cost USD"), max(len(r["cost"]) for r in rows)),
+    total_row = {
+        "period": "TOTAL",
+        "model": "",
+        "input": fmt_int(totals.input),
+        "output": fmt_int(totals.output),
+        "cache_w": fmt_int(totals.cache_write),
+        "cache_r": fmt_int(totals.cache_read),
+        "total": fmt_int(totals.total),
+        "cost": fmt_cost(totals.cost),
     }
 
-    def sep() -> str:
-        return (
-            f"+-{'-' * widths['period']}-"
-            f"-+-{'-' * widths['model']}-"
-            f"-+-{'-' * widths['input']}-"
-            f"-+-{'-' * widths['output']}-"
-            f"-+-{'-' * widths['cache_w']}-"
-            f"-+-{'-' * widths['cache_r']}-"
-            f"-+-{'-' * widths['total']}-"
-            f"-+-{'-' * widths['cost']}-+"
-        )
+    data_rows = [e for e in entries if e.get("type") == "data"] + [total_row]
+    period_rows = [e for e in entries if e.get("type") in ("data", "period_tail")]
 
-    def render(row: dict) -> str:
-        return (
-            f"| {row['period']:<{widths['period']}} "
-            f"| {row['model']:<{widths['model']}} "
-            f"| {row['input']:>{widths['input']}} "
-            f"| {row['output']:>{widths['output']}} "
-            f"| {row['cache_w']:>{widths['cache_w']}} "
-            f"| {row['cache_r']:>{widths['cache_r']}} "
-            f"| {row['total']:>{widths['total']}} "
-            f"| {row['cost']:>{widths['cost']}} |"
+    period_w = max(9, max((len(e["period"]) for e in period_rows), default=9))
+    model_w = max(20, max((len(e["model"]) for e in data_rows), default=20))
+    input_w = max(len(input_header), max(len(e["input"]) for e in data_rows))
+    output_w = max(len("Output"), max(len(e["output"]) for e in data_rows))
+    cache_w_w = max(len("Create"), max(len(e["cache_w"]) for e in data_rows))
+    cache_r_w = max(len("Read"), max(len(e["cache_r"]) for e in data_rows))
+    total_w = max(len("Tokens"), max(len(e["total"]) for e in data_rows))
+    cost_w = max(len("(USD)"), max(len(e["cost"]) for e in data_rows))
+
+    def hline(left: str, mid: str, right: str) -> str:
+        segments = [
+            "-" * (period_w + 2),
+            "-" * (model_w + 2),
+            "-" * (input_w + 2),
+            "-" * (output_w + 2),
+            "-" * (cache_w_w + 2),
+            "-" * (cache_r_w + 2),
+            "-" * (total_w + 2),
+            "-" * (cost_w + 2),
+        ]
+        text = f"{left}{mid.join(segments)}{right}"
+        return tone(text, dim)
+
+    def row_line(
+        period: str,
+        model: str,
+        input_tokens: str,
+        output_tokens: str,
+        cache_w_tokens: str,
+        cache_r_tokens: str,
+        total_tokens: str,
+        cost: str,
+        header: bool = False,
+    ) -> str:
+        color = cyan if header else ""
+        segment = (
+            f"| {period:<{period_w}} "
+            f"| {model:<{model_w}} "
+            f"| {input_tokens:>{input_w}} "
+            f"| {output_tokens:>{output_w}} "
+            f"| {cache_w_tokens:>{cache_w_w}} "
+            f"| {cache_r_tokens:>{cache_r_w}} "
+            f"| {total_tokens:>{total_w}} "
+            f"| {cost:>{cost_w}} |"
         )
+        return tone(segment, color) if header else segment
+
+    labels = col_labels or {}
+    period_header = {"daily": "Date", "weekly": "Week", "monthly": "Month"}[mode]
+    cache5_title = labels.get("col5", "Cache")
+    cache5_sub = labels.get("col5_sub", "Create")
+    cache6_title = labels.get("col6", "Cache")
+    cache6_sub = labels.get("col6_sub", "Read")
 
     print(f"\n{title}")
-    print(sep())
+    print(hline("+", "+", "+"))
     print(
-        render(
-            {
-                "period": period_name,
-                "model": "Model",
-                "input": input_header,
-                "output": "Output",
-                "cache_w": "CacheW",
-                "cache_r": "CacheR",
-                "total": "Total",
-                "cost": "Cost USD",
-            }
+        row_line(
+            period_header,
+            "Models",
+            input_header,
+            "Output",
+            cache5_title,
+            cache6_title,
+            "Total",
+            "Cost",
+            header=True,
         )
     )
-    print(sep())
-    for row in rows[:-1]:
-        print(render(row))
-    print(sep())
-    print(render(rows[-1]))
-    print(sep())
+    print(
+        row_line(
+            "",
+            "",
+            "",
+            "",
+            cache5_sub,
+            cache6_sub,
+            "Tokens",
+            "(USD)",
+            header=True,
+        )
+    )
+    print(hline("+", "+", "+"))
+
+    for entry in entries:
+        if entry["type"] == "sep":
+            print(hline("+", "+", "+"))
+            continue
+        if entry["type"] == "period_tail":
+            print(row_line(entry["period"], "", "", "", "", "", "", ""))
+            continue
+        print(
+            row_line(
+                entry["period"],
+                entry["model"],
+                entry["input"],
+                entry["output"],
+                entry["cache_w"],
+                entry["cache_r"],
+                entry["total"],
+                entry["cost"],
+            )
+        )
+
+    print(
+        row_line(
+            total_row["period"],
+            total_row["model"],
+            total_row["input"],
+            total_row["output"],
+            total_row["cache_w"],
+            total_row["cache_r"],
+            total_row["total"],
+            total_row["cost"],
+        )
+    )
+    print(hline("+", "+", "+"))
 
 
 def collect_claude(
@@ -975,6 +1068,12 @@ def main() -> None:
             totals,
             mode,
             breakdown,
+            col_labels={
+                "col5": "",
+                "col5_sub": "",
+                "col6": "",
+                "col6_sub": "",
+            },
             input_header="Audio",
         )
 
