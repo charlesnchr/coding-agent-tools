@@ -83,6 +83,7 @@ agent-usage monthly opencode codex
 ## References
 
 - `ccusage` (inspiration for usage/cost reporting style): https://github.com/ryoppippi/ccusage
+- `claude-code-tools` (Cloud/Claude Code tools reference and prior consolidation work): https://github.com/charlesnchr/claude-code-tools
 - LiteLLM model pricing registry: https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json
 
 ## Development
