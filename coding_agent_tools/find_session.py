@@ -17,7 +17,6 @@ import json
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional, cast
 
@@ -41,50 +40,31 @@ from coding_agent_tools.opencode_sessions import (
     copy_session_file as copy_opencode_session_file,
 )
 
-# Textual TUI imports (optional - falls back to plain text if not installed)
-try:
-    from textual.app import App, ComposeResult
-    from textual.containers import VerticalScroll
-    from textual.widgets import Footer, Header, ListItem, ListView, Static
-    from textual.binding import Binding
-    from textual.reactive import reactive
-
-    TEXTUAL_AVAILABLE = True
-except ImportError:
-    TEXTUAL_AVAILABLE = False
-    App = object  # type: ignore[misc,assignment]
-    ComposeResult = None  # type: ignore[misc,assignment]
-    ListItem = object  # type: ignore[misc,assignment]
-    ListView = object  # type: ignore[misc,assignment]
-    Static = object  # type: ignore[misc,assignment]
-    Header = object  # type: ignore[misc,assignment]
-    Footer = object  # type: ignore[misc,assignment]
-    VerticalScroll = object  # type: ignore[misc,assignment]
-    Binding = object  # type: ignore[misc,assignment]
-    reactive = lambda x: x  # type: ignore[misc,assignment]
-
-# Rich imports (optional - used for fallback messages)
 try:
     from rich.console import Console
+    from rich.table import Table
+    from rich import box
 
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
-    Console = cast(Any, None)  # type: ignore[misc]
+    Console = cast(Any, None)
+    Table = cast(Any, None)
+    box = cast(Any, None)
 
 
 @dataclass
 class AgentConfig:
     """Configuration for a coding agent."""
 
-    name: str
-    display_name: str
-    home_dir: Optional[str] = None
+    name: str  # Internal name (e.g., "claude", "codex")
+    display_name: str  # Display name (e.g., "Claude", "Codex")
+    home_dir: Optional[str]  # Custom home directory (None = default)
     enabled: bool = True
 
 
 def get_default_agents() -> List[AgentConfig]:
-    """Return default agent configurations."""
+    """Get default agent configurations."""
     return [
         AgentConfig(name="claude", display_name="Claude", home_dir=None),
         AgentConfig(name="codex", display_name="Codex", home_dir=None),
@@ -273,125 +253,122 @@ def search_all_agents(
     return all_sessions[:num_matches]
 
 
-def format_session_item(session: dict, idx: int, keywords: List[str]) -> str:
-    """Format a session for display in the list."""
-    mod_time = session["mod_time"]
-    date_str = datetime.fromtimestamp(mod_time).strftime("%m/%d %H:%M")
-    branch = session.get("branch", "") or ""
-    branch_str = f" [{branch}]" if branch else ""
-
-    first_msg = (session.get("first_message", "") or "").replace("\n", " ")[:150]
-    last_msg = (session.get("last_message", "") or "").replace("\n", " ")[:150]
-
-    lines = [
-        f"[bold yellow]#{idx}[/bold yellow]  [magenta]{session['agent_display']}[/magenta]  "
-        f"[dim]{session['session_id']}[/dim]  [green]{session['project']}[/green]{branch_str}  "
-        f"[blue]{date_str}[/blue]  [cyan]{session['lines']} lines[/cyan]",
-        f"  [white]First:[/white] {first_msg}",
-        f"  [white]Last:[/white]  {last_msg}",
-    ]
-
-    if keywords:
-        score = session.get("match_score", 0.0) or 0.0
-        chunk = (session.get("best_chunk", "") or "").replace("\n", " ")[:200]
-        lines.append(f"  [yellow]Score: {score:.0f}[/yellow]  [white]Match:[/white] {chunk}")
-
-    return "\n".join(lines)
-
-
-class SessionItem(ListItem):  # type: ignore[misc]
-    """A session list item."""
-
-    def __init__(self, session: dict, idx: int, keywords: List[str]) -> None:
-        self.session = session
-        self.idx = idx
-        self.keywords = keywords
-        super().__init__()
-
-    def compose(self) -> "ComposeResult":  # type: ignore[override]
-        yield Static(format_session_item(self.session, self.idx, self.keywords))
-
-
-class SessionPicker(App):  # type: ignore[misc]
-    """Textual TUI for selecting a session."""
-
-    CSS = """
-    ListView {
-        height: 1fr;
-    }
-    ListItem {
-        padding: 0 1;
-        margin: 0;
-    }
-    ListItem:hover {
-        background: $surface-lighten-1;
-    }
-    ListItem.-active {
-        background: $primary-background-lighten-2;
-    }
-    Static {
-        padding: 1 0;
-    }
-    """
-
-    BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("escape", "quit", "Quit"),
-        Binding("enter", "select", "Select"),
-        Binding("up", "cursor_up", "Up", show=False),
-        Binding("down", "cursor_down", "Down", show=False),
-        Binding("k", "cursor_up", "Up", show=False),
-        Binding("j", "cursor_down", "Down", show=False),
-    ]
-
-    selected_session: reactive[Optional[dict]] = reactive(None)
-
-    def __init__(self, sessions: List[dict], keywords: List[str]) -> None:
-        self.sessions = sessions
-        self.keywords = keywords
-        super().__init__()
-
-    def compose(self) -> "ComposeResult":  # type: ignore[override]
-        yield Header()
-        with VerticalScroll():
-            # Reverse so best match is at bottom (nearest prompt)
-            reversed_sessions = list(reversed(self.sessions))
-            yield ListView(
-                *[
-                    SessionItem(session, len(self.sessions) - i, self.keywords)
-                    for i, session in enumerate(reversed_sessions)
-                ],
-                id="session-list",
-            )
-        yield Footer()
-
-    def on_list_view_selected(self, event: "ListView.Selected") -> None:  # type: ignore[name-defined]
-        """Handle session selection."""
-        item = event.item
-        if isinstance(item, SessionItem):
-            self.selected_session = item.session
-            self.exit()
-
-    def action_select(self) -> None:
-        """Select the current item."""
-        list_view = self.query_one("#session-list", ListView)
-        if list_view.highlighted_child is not None:
-            item = list_view.highlighted_child
-            if isinstance(item, SessionItem):
-                self.selected_session = item.session
-                self.exit()
-
-
-def display_textual_ui(
-    sessions: List[dict], keywords: List[str]
+def display_interactive_ui(
+    sessions: List[dict], keywords: List[str], stderr_mode: bool = False, num_matches: int = 10
 ) -> Optional[dict]:
-    """Display Textual TUI for session selection."""
-    if not TEXTUAL_AVAILABLE:
+    """Display unified session selection UI."""
+    if not RICH_AVAILABLE:
         return None
 
-    app = SessionPicker(sessions, keywords)
-    app.run()
-    return app.selected_session
+    # Use stderr console if in stderr mode
+    ui_console = Console(file=sys.stderr) if stderr_mode else Console()
+
+    # Limit to specified number of sessions
+    display_sessions = sessions[:num_matches]
+
+    if not display_sessions:
+        ui_console.print("[red]No sessions found[/red]")
+        return None
+
+    # Determine if we're in keyword search mode
+    has_keywords = bool(keywords)
+    # Create table
+    title = (
+        f"Sessions matching: {', '.join(keywords)}" if has_keywords else "All sessions"
+    )
+    table = Table(
+        title=title, box=box.ROUNDED, show_header=True, header_style="bold cyan",
+        padding=(0, 1),
+    )
+    table.add_column("#", style="bold yellow", width=3, no_wrap=True)
+    table.add_column("Agent", style="magenta", width=5, no_wrap=True)
+    table.add_column("Session", style="dim", max_width=20, no_wrap=True, overflow="ellipsis")
+    table.add_column("Project", style="green", max_width=16, no_wrap=True, overflow="ellipsis")
+    table.add_column("Branch", style="cyan", max_width=14, no_wrap=True, overflow="ellipsis")
+    table.add_column("Date", style="blue", width=11, no_wrap=True)
+    table.add_column("Lines", style="cyan", justify="right", width=5, no_wrap=True)
+    table.add_column("First Msg", style="white", min_width=10, max_width=30, overflow="fold")
+    table.add_column("Last Msg", style="white", min_width=10, max_width=30, overflow="fold")
+    if has_keywords:
+        table.add_column("Score", style="yellow", justify="right", width=5, no_wrap=True)
+        table.add_column("Best Match", style="white", min_width=12, max_width=30, overflow="fold")
+    # Reverse display order so best match (#1) is at bottom of table (nearest prompt)
+    from datetime import datetime
+    import re
+    reversed_sessions = list(reversed(display_sessions))
+
+    for display_idx, session in enumerate(reversed_sessions):
+        # Original ranking index (1 = best match)
+        idx = len(display_sessions) - display_idx
+        mod_time = session["mod_time"]
+        date_str = datetime.fromtimestamp(mod_time).strftime("%m/%d %H:%M")
+        branch_display = session.get("branch", "") or ""
+        first_msg = (session.get("first_message", "") or "")[:60]
+        last_msg = (session.get("last_message", "") or "")[:60]
+
+        row = [
+            str(idx),
+            session["agent_display"],
+            session["session_id"],
+            session["project"],
+            branch_display,
+            date_str,
+            str(session["lines"]),
+            first_msg,
+            last_msg,
+        ]
+
+        if has_keywords:
+            score = session.get("match_score", 0.0) or 0.0
+            row.append(f"{score:.0f}")
+            # Build highlighted best_chunk (truncate to 60 chars before highlighting)
+            chunk = (session.get("best_chunk", "") or "")[:60]
+            if chunk and keywords:
+                highlighted = chunk
+                for kw in keywords:
+                    pattern = re.compile(re.escape(kw), re.IGNORECASE)
+                    highlighted = pattern.sub(
+                        lambda m: f"[bold green]{m.group()}[/bold green]",
+                        highlighted,
+                    )
+                row.append(highlighted)
+            else:
+                row.append(chunk)
+
+        table.add_row(*row)
+
+    ui_console.print(table)
+    ui_console.print("\n[bold]Select a session:[/bold]")
+    ui_console.print(f"  • Enter number (1-{len(display_sessions)}) to select")
+    ui_console.print("  • Press Enter to cancel\n")
+
+    while True:
+        try:
+            from rich.prompt import Prompt
+
+            choice = Prompt.ask(
+                "Your choice", default="", show_default=False, console=ui_console
+            )
+
+            # Handle empty input - cancel
+            if not choice or not choice.strip():
+                ui_console.print("[yellow]Cancelled[/yellow]")
+                return None
+
+            idx = int(choice) - 1
+            if 0 <= idx < len(display_sessions):
+                return display_sessions[idx]
+            else:
+                ui_console.print("[red]Invalid choice. Please try again.[/red]")
+
+        except KeyboardInterrupt:
+            ui_console.print("\n[yellow]Cancelled[/yellow]")
+            return None
+        except EOFError:
+            ui_console.print("\n[yellow]Cancelled (EOF)[/yellow]")
+            return None
+        except ValueError:
+            ui_console.print("[red]Invalid choice. Please try again.[/red]")
 
 
 def show_action_menu(session: dict, stderr_mode: bool = False) -> Optional[str]:
@@ -513,8 +490,8 @@ Examples:
         "-n",
         "--num-matches",
         type=int,
-        default=20,
-        help="Number of matching sessions to display (default: 20)",
+        default=10,
+        help="Number of matching sessions to display (default: 10)",
     )
     parser.add_argument(
         "--agents",
@@ -569,20 +546,22 @@ Examples:
             print(f"No sessions found{keyword_msg} in {scope}", file=sys.stderr)
         sys.exit(0)
 
-    # Display Textual TUI
-    if TEXTUAL_AVAILABLE:
-        selected_session = display_textual_ui(matching_sessions, keywords)
+    # Display interactive UI
+    if RICH_AVAILABLE:
+        selected_session = display_interactive_ui(
+            matching_sessions, keywords, stderr_mode=args.shell, num_matches=args.num_matches
+        )
         if selected_session:
             # Show action menu
             action = show_action_menu(selected_session, stderr_mode=args.shell)
             if action:
                 handle_action(selected_session, action, shell_mode=args.shell)
     else:
-        # Fallback without Textual
+        # Fallback without rich
         print("\nMatching sessions:")
         for idx, session in enumerate(matching_sessions[: args.num_matches], 1):
             print(
-                f"{idx}. [{session['agent_display']}] {session['session_id']} | "
+                f"{idx}. [{session['agent_display']}] {session['session_id'][:16]}... | "
                 f"{session['project']} | {session.get('branch', 'N/A')}"
             )
 
