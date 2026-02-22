@@ -1,6 +1,6 @@
 [project]
 name = "coding-agent-tools"
-version = "0.1.7"
+version = "0.1.8"
 description = "Session search and unified usage analytics for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
