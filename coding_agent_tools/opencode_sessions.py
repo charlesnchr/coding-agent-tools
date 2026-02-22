@@ -14,12 +14,15 @@ Examples:
 import argparse
 import json
 import os
+import re
 import shlex
 import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
+
+from rapidfuzz import fuzz
 
 try:
     from rich.console import Console
@@ -28,6 +31,8 @@ try:
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
+    Console = cast(Any, None)
+    Table = cast(Any, None)
 
 
 def get_opencode_home(custom_home: Optional[str] = None) -> Path:
@@ -75,6 +80,27 @@ def format_preview(first_message: Optional[str], last_message: Optional[str]) ->
     return None
 
 
+def _extract_clean_text(value: object) -> str:
+    text_parts: list[str] = []
+
+    def _collect_strings(item: object) -> None:
+        if isinstance(item, str):
+            text_parts.append(item)
+            return
+        if isinstance(item, dict):
+            for child in item.values():
+                _collect_strings(child)
+            return
+        if isinstance(item, list):
+            for child in item:
+                _collect_strings(child)
+
+    _collect_strings(value)
+    text = " ".join(text_parts)
+    text = re.sub(r"[{}\[\]\"'\\]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def find_sessions(
     opencode_home: Path,
     keywords: list[str],
@@ -91,7 +117,7 @@ def find_sessions(
         global_search: If False, filter to current directory only
 
     Returns list of dicts with: session_id, project, date, mod_time,
-                                 lines, preview, cwd, file_path
+                                 lines, preview, best_chunk, cwd, file_path
     """
     db_path = get_db_path(opencode_home)
     if not db_path.exists():
@@ -137,7 +163,7 @@ def find_sessions(
                     continue
 
             # Search keywords in message parts
-            found, preview = _search_session_keywords(conn, session_id, keywords)
+            found, preview, best_chunk = _search_session_keywords(conn, session_id, keywords)
             if not found:
                 continue
 
@@ -162,6 +188,7 @@ def find_sessions(
                     "create_time": create_time,
                     "lines": session["msg_count"],
                     "preview": preview or title or "No preview",
+                    "best_chunk": best_chunk,
                     "cwd": cwd,
                     "title": title,
                 }
@@ -184,18 +211,21 @@ def find_sessions(
 
 def _search_session_keywords(
     conn: sqlite3.Connection, session_id: str, keywords: list[str]
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Search for keywords in session message parts.
 
-    Returns: (found, preview)
+    Returns: (found, preview, best_chunk)
     - found: True if all keywords found (or True if no keywords)
     - preview: first and last user message text
+    - best_chunk: best-matching plain-text chunk from session parts
     """
     first_any = None
     first_substantial = None
     last_any = None
     last_substantial = None
+    best_line_score = 0.0
+    best_chunk = None
 
     # Get all text parts for this session, joined with message role info
     rows = conn.execute(
@@ -213,18 +243,41 @@ def _search_session_keywords(
     found_keywords = set()
 
     for row in rows:
+        part_data_str = row["part_data"] or ""
+        msg_data_str = row["msg_data"] or ""
+        combined_lower = (part_data_str + msg_data_str).lower()
+
+        clean_text = re.sub(
+            r"\s+",
+            " ",
+            re.sub(r"[{}\[\]\"'\\]", " ", part_data_str + " " + msg_data_str),
+        ).strip()
+
         try:
-            part_data_str = row["part_data"]
-            msg_data_str = row["msg_data"]
+            part_data = json.loads(part_data_str)
+            msg_data = json.loads(msg_data_str)
+
+            row_clean_text = _extract_clean_text([part_data, msg_data])
+            if row_clean_text:
+                clean_text = row_clean_text
+
+            line_score = 0.0
+            for kw in keywords_lower:
+                line_score += max(
+                    fuzz.partial_ratio(kw, combined_lower),
+                    fuzz.token_set_ratio(kw, combined_lower),
+                )
+
+            if keywords_lower and clean_text and line_score > best_line_score:
+                best_line_score = line_score
+                best_chunk = clean_text[:300]
 
             # Extract user messages for first+last preview
-            msg_data = json.loads(msg_data_str)
             if msg_data.get("role") == "user":
-                part_data = json.loads(part_data_str)
                 if part_data.get("type") == "text":
                     text = part_data.get("text", "").strip()
                     if text and not _is_system_message(text):
-                        cleaned = text[:400].replace("\n", " ").strip()
+                        cleaned = text[:200].replace("\n", " ").strip()
                         if first_any is None:
                             first_any = cleaned
                         last_any = cleaned
@@ -235,22 +288,36 @@ def _search_session_keywords(
                             last_substantial = cleaned
 
             # Search for keywords in all text content (both part and message data)
-            combined_lower = (part_data_str + msg_data_str).lower()
             if keywords_lower:
                 for kw in keywords_lower:
                     if kw in combined_lower:
                         found_keywords.add(kw)
 
         except (json.JSONDecodeError, KeyError):
+            line_score = 0.0
+            for kw in keywords_lower:
+                line_score += max(
+                    fuzz.partial_ratio(kw, combined_lower),
+                    fuzz.token_set_ratio(kw, combined_lower),
+                )
+
+            if keywords_lower and clean_text and line_score > best_line_score:
+                best_line_score = line_score
+                best_chunk = clean_text[:300]
+
+            if keywords_lower:
+                for kw in keywords_lower:
+                    if kw in combined_lower:
+                        found_keywords.add(kw)
             continue
 
     all_found = True if not keywords_lower else len(found_keywords) == len(keywords_lower)
     if not all_found:
-        return False, None
+        return False, None, None
 
     first_message = first_substantial or first_any
     last_message = last_substantial or last_any
-    return True, format_preview(first_message, last_message)
+    return True, format_preview(first_message, last_message), best_chunk
 
 
 def _is_system_message(text: str) -> bool:
