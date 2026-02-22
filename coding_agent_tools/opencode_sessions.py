@@ -20,19 +20,32 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional, TypedDict, cast
 
 from rapidfuzz import fuzz
 
 try:
     from rich.console import Console
     from rich.table import Table
-
-    RICH_AVAILABLE = True
 except ImportError:
-    RICH_AVAILABLE = False
     Console = cast(Any, None)
     Table = cast(Any, None)
+
+RICH_AVAILABLE = Console is not None
+
+
+class OpenCodeSessionMatch(TypedDict):
+    session_id: str
+    project: str
+    branch: str
+    date: str
+    mod_time: float
+    create_time: float
+    lines: int
+    preview: str
+    best_chunk: Optional[str]
+    cwd: str
+    title: str
 
 
 def get_opencode_home(custom_home: Optional[str] = None) -> Path:
@@ -106,7 +119,7 @@ def find_sessions(
     keywords: list[str],
     num_matches: int = 10,
     global_search: bool = False,
-) -> list[dict]:
+) -> list[OpenCodeSessionMatch]:
     """
     Find OpenCode sessions matching keywords.
 
@@ -125,7 +138,7 @@ def find_sessions(
 
     current_cwd = os.getcwd() if not global_search else None
 
-    matches = []
+    matches: list[OpenCodeSessionMatch] = []
 
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -338,9 +351,9 @@ def _format_date_range(create_time: float, mod_time: float) -> str:
 
 
 def display_interactive_ui(
-    matches: list[dict],
-    keywords: list[str] = None,
-) -> Optional[dict]:
+    matches: list[OpenCodeSessionMatch],
+    keywords: Optional[list[str]] = None,
+) -> Optional[OpenCodeSessionMatch]:
     """Display matches in interactive UI and get user selection."""
     if not matches:
         print("No matching sessions found.")
@@ -409,7 +422,7 @@ def display_interactive_ui(
         return None
 
 
-def show_action_menu(match: dict) -> Optional[str]:
+def show_action_menu(match: OpenCodeSessionMatch) -> Optional[str]:
     """Show action menu for selected session."""
     print(f"\n=== Session: {match['session_id'][:20]}... ===")
     print(f"Project: {match['project']}")

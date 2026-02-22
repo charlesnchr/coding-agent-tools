@@ -33,9 +33,7 @@ try:
     from rich.prompt import Prompt, Confirm
     from rich.progress import Progress, SpinnerColumn, TextColumn
     from rich import box
-    RICH_AVAILABLE = True
 except ImportError:
-    RICH_AVAILABLE = False
     Console = cast(Any, None)
     Table = cast(Any, None)
     Prompt = cast(Any, None)
@@ -44,6 +42,8 @@ except ImportError:
     SpinnerColumn = cast(Any, None)
     TextColumn = cast(Any, None)
     box = cast(Any, None)
+
+RICH_AVAILABLE = Console is not None
 
 console = Console() if RICH_AVAILABLE else None
 

@@ -22,19 +22,38 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional, TypedDict, cast
 
 from rapidfuzz import fuzz
 
 try:
     from rich.console import Console
     from rich.table import Table
-
-    RICH_AVAILABLE = True
 except ImportError:
-    RICH_AVAILABLE = False
     Console = cast(Any, None)
     Table = cast(Any, None)
+
+RICH_AVAILABLE = Console is not None
+
+
+class CodexSessionMetadata(TypedDict):
+    id: str
+    cwd: str
+    branch: str
+    timestamp: str
+
+
+class CodexSessionMatch(TypedDict):
+    session_id: str
+    project: str
+    branch: str
+    date: str
+    mod_time: float
+    lines: int
+    preview: str
+    best_chunk: Optional[str]
+    cwd: str
+    file_path: str
 
 
 def get_codex_home(custom_home: Optional[str] = None) -> Path:
@@ -61,7 +80,7 @@ def extract_session_id_from_filename(filename: str) -> Optional[str]:
     return None
 
 
-def extract_session_metadata(session_file: Path) -> Optional[dict]:
+def extract_session_metadata(session_file: Path) -> Optional[CodexSessionMetadata]:
     """
     Extract metadata from the first session_meta entry in a Codex session file.
 
@@ -241,7 +260,7 @@ def find_sessions(
     keywords: list[str],
     num_matches: int = 10,
     global_search: bool = False,
-) -> list[dict]:
+) -> list[CodexSessionMatch]:
     """
     Find Codex sessions matching keywords.
 
@@ -345,9 +364,9 @@ def find_sessions(
 
 
 def display_interactive_ui(
-    matches: list[dict],
-    keywords: list[str] = None,
-) -> Optional[dict]:
+    matches: list[CodexSessionMatch],
+    keywords: Optional[list[str]] = None,
+) -> Optional[CodexSessionMatch]:
     """
     Display matches in interactive UI and get user selection.
 
@@ -420,7 +439,7 @@ def display_interactive_ui(
         return None
 
 
-def show_action_menu(match: dict) -> Optional[str]:
+def show_action_menu(match: CodexSessionMatch) -> Optional[str]:
     """
     Show action menu for selected session.
 
