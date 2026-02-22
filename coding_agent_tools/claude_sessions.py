@@ -25,6 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Set, Tuple, Optional
 
+from rapidfuzz import fuzz
+
 try:
     from rich.console import Console
     from rich.table import Table
@@ -121,45 +123,33 @@ def extract_project_name(original_path: str) -> str:
     return parts[-1] if parts else "unknown"
 
 
-def search_keywords_in_file(filepath: Path, keywords: List[str]) -> tuple[bool, int, Optional[str]]:
+def search_keywords_in_file(
+    filepath: Path, keywords: List[str]
+) -> tuple[bool, int, Optional[str], Optional[float], Optional[str], Optional[str]]:
     """
-    Check if all keywords are present in the JSONL file, count lines, and extract git branch.
+    Check keyword matches, count lines, extract git branch, and user message boundaries.
 
     Args:
         filepath: Path to the JSONL file
         keywords: List of keywords to search for (case-insensitive). Empty list matches all files.
 
     Returns:
-        Tuple of (matches: bool, line_count: int, git_branch: Optional[str])
-        - matches: True if ALL keywords are found in the file (or True if no keywords)
+        Tuple of (matches, line_count, git_branch, match_score, first_message, last_message)
+        - matches: True if fuzzy threshold is met for all keywords (or True if no keywords)
         - line_count: Total number of lines in the file
         - git_branch: Git branch name from the first message that has it, or None
+        - match_score: Average fuzzy score across keywords, or None when no keywords
+        - first_message: First substantial user message (fallback: first user message)
+        - last_message: Last substantial user message (fallback: last user message)
     """
-    # If no keywords, match all files
-    if not keywords:
-        line_count = 0
-        git_branch = None
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line_count += 1
-                    # Extract git branch from JSON if not already found
-                    if git_branch is None:
-                        try:
-                            data = json.loads(line.strip())
-                            if 'gitBranch' in data and data['gitBranch']:
-                                git_branch = data['gitBranch']
-                        except (json.JSONDecodeError, KeyError):
-                            pass
-        except Exception:
-            return False, 0, None
-        return True, line_count, git_branch
-
-    # Convert keywords to lowercase for case-insensitive search
     keywords_lower = [k.lower() for k in keywords]
-    found_keywords = set()
+    keyword_best_scores = [0.0 for _ in keywords_lower]
     line_count = 0
     git_branch = None
+    first_any = None
+    first_substantial = None
+    last_any = None
+    last_substantial = None
 
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -167,25 +157,66 @@ def search_keywords_in_file(filepath: Path, keywords: List[str]) -> tuple[bool, 
                 line_count += 1
                 line_lower = line.lower()
 
-                # Extract git branch from JSON if not already found
-                if git_branch is None:
-                    try:
-                        data = json.loads(line.strip())
-                        if 'gitBranch' in data and data['gitBranch']:
-                            git_branch = data['gitBranch']
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+                # Fuzzy match each keyword against this session line
+                for idx, keyword in enumerate(keywords_lower):
+                    score = max(
+                        fuzz.partial_ratio(keyword, line_lower),
+                        fuzz.token_set_ratio(keyword, line_lower),
+                    )
+                    if score > keyword_best_scores[idx]:
+                        keyword_best_scores[idx] = score
 
-                # Check which keywords are in this line
-                for keyword in keywords_lower:
-                    if keyword in line_lower:
-                        found_keywords.add(keyword)
+                try:
+                    data = json.loads(line.strip())
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                # Extract git branch from JSON if not already found
+                if git_branch is None and data.get('gitBranch'):
+                    git_branch = data['gitBranch']
+
+                # Capture first/last user messages for UI
+                if data.get('type') != 'user':
+                    continue
+
+                message = data.get('message', {})
+                content = message.get('content', '')
+                text = None
+
+                if isinstance(content, str):
+                    text = content.strip()
+                elif isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and item.get('type') == 'text':
+                            text = item.get('text', '').strip()
+                            if text:
+                                break
+
+                if text and not is_system_message(text):
+                    cleaned = text.replace('\n', ' ').strip()[:400]
+                    if first_any is None:
+                        first_any = cleaned
+                    last_any = cleaned
+
+                    if len(cleaned) > 20:
+                        if first_substantial is None:
+                            first_substantial = cleaned
+                        last_substantial = cleaned
     except Exception:
         # Skip files that can't be read
-        return False, 0, None
+        return False, 0, None, None, None, None
 
-    matches = len(found_keywords) == len(keywords_lower)
-    return matches, line_count, git_branch
+    if not keywords_lower:
+        matches = True
+        match_score = None
+    else:
+        min_score = min(keyword_best_scores) if keyword_best_scores else 0.0
+        matches = min_score >= 70
+        match_score = sum(keyword_best_scores) / len(keyword_best_scores) if keyword_best_scores else 0.0
+
+    first_message = first_substantial or first_any
+    last_message = last_substantial or last_any
+    return matches, line_count, git_branch, match_score, first_message, last_message
 
 
 def is_system_message(text: str) -> bool:
@@ -199,70 +230,22 @@ def is_system_message(text: str) -> bool:
     return False
 
 
-def format_preview(first_message: Optional[str], last_message: Optional[str]) -> str:
-    """Format first/last user messages into a compact preview string."""
-    if first_message and last_message:
-        if first_message == last_message:
-            return f"First/Last: {first_message}"
-        return f"First: {first_message}\nLast: {last_message}"
-    if first_message:
-        return f"First/Last: {first_message}"
-    if last_message:
-        return f"First/Last: {last_message}"
-    return "No preview available"
-
-
-def get_session_preview(filepath: Path) -> str:
-    """Get a preview with both first and last user messages."""
-    first_any = None
-    first_substantial = None
-    last_any = None
-    last_substantial = None
-
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    # Check top-level type for user messages
-                    if data.get('type') == 'user':
-                        message = data.get('message', {})
-                        content = message.get('content', '')
-                        text = None
-
-                        if isinstance(content, str):
-                            text = content.strip()
-                        elif isinstance(content, list):
-                            # Handle structured content
-                            for item in content:
-                                if isinstance(item, dict) and item.get('type') == 'text':
-                                    text = item.get('text', '').strip()
-                                    break
-
-                        # Filter out system messages and track first+last user messages
-                        if text and not is_system_message(text):
-                            cleaned = text.replace('\n', ' ')[:400]
-                            if first_any is None:
-                                first_any = cleaned
-                            last_any = cleaned
-
-                            # Prefer substantial messages (>20 chars) for readability
-                            if len(cleaned) > 20:
-                                if first_substantial is None:
-                                    first_substantial = cleaned
-                                last_substantial = cleaned
-
-                except (json.JSONDecodeError, KeyError):
-                    continue
-    except Exception:
-        pass
-
-    first_message = first_substantial or first_any
-    last_message = last_substantial or last_any
-    return format_preview(first_message, last_message)
-
-
-def find_sessions(keywords: List[str], global_search: bool = False, claude_home: Optional[str] = None) -> List[Tuple[str, float, float, int, str, str, str, Optional[str]]]:
+def find_sessions(
+    keywords: List[str], global_search: bool = False, claude_home: Optional[str] = None
+) -> List[
+    Tuple[
+        str,
+        float,
+        float,
+        int,
+        str,
+        Optional[str],
+        Optional[str],
+        Optional[float],
+        str,
+        Optional[str],
+    ]
+]:
     """
     Find all Claude Code sessions containing the specified keywords.
 
@@ -272,7 +255,9 @@ def find_sessions(keywords: List[str], global_search: bool = False, claude_home:
         claude_home: Optional custom Claude home directory (defaults to ~/.claude)
 
     Returns:
-        List of tuples (session_id, modification_time, creation_time, line_count, project_name, preview, project_path, git_branch) sorted by modification time
+        List of tuples (session_id, modification_time, creation_time, line_count,
+        project_name, first_message, last_message, match_score, project_path,
+        git_branch) sorted by modification time
     """
     matching_sessions = []
     
@@ -295,15 +280,34 @@ def find_sessions(keywords: List[str], global_search: bool = False, claude_home:
                     
                     # Search all JSONL files in this project directory
                     for jsonl_file in project_dir.glob("*.jsonl"):
-                        matches, line_count, git_branch = search_keywords_in_file(jsonl_file, keywords)
+                        (
+                            matches,
+                            line_count,
+                            git_branch,
+                            match_score,
+                            first_message,
+                            last_message,
+                        ) = search_keywords_in_file(jsonl_file, keywords)
                         if matches:
                             session_id = jsonl_file.stem
                             stat = jsonl_file.stat()
                             mod_time = stat.st_mtime
                             # Get creation time (birthtime on macOS, ctime elsewhere)
                             create_time = getattr(stat, 'st_birthtime', stat.st_ctime)
-                            preview = get_session_preview(jsonl_file)
-                            matching_sessions.append((session_id, mod_time, create_time, line_count, project_name, preview, original_path, git_branch))
+                            matching_sessions.append(
+                                (
+                                    session_id,
+                                    mod_time,
+                                    create_time,
+                                    line_count,
+                                    project_name,
+                                    first_message,
+                                    last_message,
+                                    match_score,
+                                    original_path,
+                                    git_branch,
+                                )
+                            )
                     
                     progress.advance(task)
         else:
@@ -312,15 +316,34 @@ def find_sessions(keywords: List[str], global_search: bool = False, claude_home:
                 project_name = extract_project_name(original_path)
 
                 for jsonl_file in project_dir.glob("*.jsonl"):
-                    matches, line_count, git_branch = search_keywords_in_file(jsonl_file, keywords)
+                    (
+                        matches,
+                        line_count,
+                        git_branch,
+                        match_score,
+                        first_message,
+                        last_message,
+                    ) = search_keywords_in_file(jsonl_file, keywords)
                     if matches:
                         session_id = jsonl_file.stem
                         stat = jsonl_file.stat()
                         mod_time = stat.st_mtime
                         # Get creation time (birthtime on macOS, ctime elsewhere)
                         create_time = getattr(stat, 'st_birthtime', stat.st_ctime)
-                        preview = get_session_preview(jsonl_file)
-                        matching_sessions.append((session_id, mod_time, create_time, line_count, project_name, preview, original_path, git_branch))
+                        matching_sessions.append(
+                            (
+                                session_id,
+                                mod_time,
+                                create_time,
+                                line_count,
+                                project_name,
+                                first_message,
+                                last_message,
+                                match_score,
+                                original_path,
+                                git_branch,
+                            )
+                        )
     else:
         # Search current project only
         claude_dir = get_claude_project_dir(claude_home)
@@ -332,15 +355,34 @@ def find_sessions(keywords: List[str], global_search: bool = False, claude_home:
         
         # Search all JSONL files in the directory
         for jsonl_file in claude_dir.glob("*.jsonl"):
-            matches, line_count, git_branch = search_keywords_in_file(jsonl_file, keywords)
+            (
+                matches,
+                line_count,
+                git_branch,
+                match_score,
+                first_message,
+                last_message,
+            ) = search_keywords_in_file(jsonl_file, keywords)
             if matches:
                 session_id = jsonl_file.stem
                 stat = jsonl_file.stat()
                 mod_time = stat.st_mtime
                 # Get creation time (birthtime on macOS, ctime elsewhere)
                 create_time = getattr(stat, 'st_birthtime', stat.st_ctime)
-                preview = get_session_preview(jsonl_file)
-                matching_sessions.append((session_id, mod_time, create_time, line_count, project_name, preview, os.getcwd(), git_branch))
+                matching_sessions.append(
+                    (
+                        session_id,
+                        mod_time,
+                        create_time,
+                        line_count,
+                        project_name,
+                        first_message,
+                        last_message,
+                        match_score,
+                        os.getcwd(),
+                        git_branch,
+                    )
+                )
     
     # Sort by modification time (newest first)
     matching_sessions.sort(key=lambda x: x[1], reverse=True)
@@ -348,7 +390,25 @@ def find_sessions(keywords: List[str], global_search: bool = False, claude_home:
     return matching_sessions
 
 
-def display_interactive_ui(sessions: List[Tuple[str, float, int, str, str, str, Optional[str]]], keywords: List[str], stderr_mode: bool = False, num_matches: int = 10) -> Optional[Tuple[str, str]]:
+def display_interactive_ui(
+    sessions: List[
+        Tuple[
+            str,
+            float,
+            float,
+            int,
+            str,
+            Optional[str],
+            Optional[str],
+            Optional[float],
+            str,
+            Optional[str],
+        ]
+    ],
+    keywords: List[str],
+    stderr_mode: bool = False,
+    num_matches: int = 10,
+) -> Optional[Tuple[str, str]]:
     """Display interactive UI for session selection."""
     if not RICH_AVAILABLE:
         return None
@@ -380,14 +440,28 @@ def display_interactive_ui(sessions: List[Tuple[str, float, int, str, str, str, 
     table.add_column("Branch", style="magenta")
     table.add_column("Date-Range", style="blue")
     table.add_column("Lines", style="cyan", justify="right")
-    table.add_column("First + Last User Message", style="white", max_width=60, overflow="fold")
+    table.add_column("Score", style="cyan", justify="right")
+    table.add_column("First Message", style="white", max_width=40, overflow="fold")
+    table.add_column("Last Message", style="white", max_width=40, overflow="fold")
     
-    for idx, (session_id, mod_time, create_time, line_count, project_name, preview, _, git_branch) in enumerate(display_sessions, 1):
+    for idx, (
+        session_id,
+        mod_time,
+        create_time,
+        line_count,
+        project_name,
+        first_message,
+        last_message,
+        match_score,
+        _,
+        git_branch,
+    ) in enumerate(display_sessions, 1):
         # Format: "10/04 - 10/09 13:45"
         create_date = datetime.fromtimestamp(create_time).strftime('%m/%d')
         mod_date = datetime.fromtimestamp(mod_time).strftime('%m/%d %H:%M')
         date_display = f"{create_date} - {mod_date}"
         branch_display = git_branch if git_branch else "N/A"
+        score_display = f"{match_score:.1f}" if match_score is not None else "-"
         table.add_row(
             str(idx),
             session_id[:8] + "...",
@@ -395,7 +469,9 @@ def display_interactive_ui(sessions: List[Tuple[str, float, int, str, str, str, 
             branch_display,
             date_display,
             str(line_count),
-            preview
+            score_display,
+            first_message or "",
+            last_message or "",
         )
     
     ui_console.print(table)
@@ -457,13 +533,26 @@ def display_interactive_ui(sessions: List[Tuple[str, float, int, str, str, str, 
             ui_console.print("[red]Invalid choice. Please try again.[/red]")
 
 
-def show_action_menu(session_info: Tuple[str, float, float, int, str, str, str, Optional[str]]) -> Optional[str]:
+def show_action_menu(
+    session_info: Tuple[
+        str,
+        float,
+        float,
+        int,
+        str,
+        Optional[str],
+        Optional[str],
+        Optional[float],
+        str,
+        Optional[str],
+    ]
+) -> Optional[str]:
     """
     Show action menu for selected session.
 
     Returns: action choice ('resume', 'path', 'copy') or None if cancelled
     """
-    session_id, _, _, _, project_name, _, project_path, git_branch = session_info
+    session_id, _, _, _, project_name, _, _, _, project_path, git_branch = session_info
 
     print(f"\n=== Session: {session_id[:8]}... ===")
     print(f"Project: {project_name}")
@@ -714,7 +803,7 @@ To persist directory changes when resuming sessions:
                 return
 
             session_id = selected_session[0]
-            project_path = selected_session[6]  # Updated index after adding creation_time
+            project_path = selected_session[8]
 
             # Perform selected action
             if action == "resume":
@@ -730,15 +819,33 @@ To persist directory changes when resuming sessions:
         # Fallback: print session IDs as before
         if not args.shell:
             print("\nMatching sessions:")
-        for idx, (session_id, mod_time, create_time, line_count, project_name, preview, project_path, git_branch) in enumerate(matching_sessions[:args.num_matches], 1):
+        for idx, (
+            session_id,
+            mod_time,
+            create_time,
+            line_count,
+            project_name,
+            _,
+            _,
+            match_score,
+            project_path,
+            git_branch,
+        ) in enumerate(matching_sessions[:args.num_matches], 1):
             create_date = datetime.fromtimestamp(create_time).strftime('%m/%d')
             mod_date = datetime.fromtimestamp(mod_time).strftime('%m/%d %H:%M')
             date_display = f"{create_date} - {mod_date}"
             branch_display = git_branch if git_branch else "N/A"
+            score_display = f"{match_score:.1f}" if match_score is not None else "-"
             if getattr(args, 'global'):
-                print(f"{idx}. {session_id} | {project_name} | {branch_display} | {date_display} | {line_count} lines", file=sys.stderr if args.shell else sys.stdout)
+                print(
+                    f"{idx}. {session_id} | {project_name} | {branch_display} | {date_display} | score={score_display} | {line_count} lines",
+                    file=sys.stderr if args.shell else sys.stdout,
+                )
             else:
-                print(f"{idx}. {session_id} | {branch_display} | {date_display} | {line_count} lines", file=sys.stderr if args.shell else sys.stdout)
+                print(
+                    f"{idx}. {session_id} | {branch_display} | {date_display} | score={score_display} | {line_count} lines",
+                    file=sys.stderr if args.shell else sys.stdout,
+                )
 
         if len(matching_sessions) > args.num_matches:
             print(f"\n... and {len(matching_sessions) - args.num_matches} more sessions", file=sys.stderr if args.shell else sys.stdout)
@@ -747,7 +854,7 @@ To persist directory changes when resuming sessions:
         if len(matching_sessions) == 1:
             if not args.shell:
                 print("\nOnly one match found. Resuming automatically...")
-            session_id, _, _, _, _, _, project_path, _ = matching_sessions[0]
+            session_id, _, _, _, _, _, _, _, project_path, _ = matching_sessions[0]
             resume_session(session_id, project_path, shell_mode=args.shell, claude_home=args.claude_home)
         else:
             try:
@@ -766,7 +873,7 @@ To persist directory changes when resuming sessions:
                     
                 idx = int(choice) - 1
                 if 0 <= idx < min(args.num_matches, len(matching_sessions)):
-                    session_id, _, _, _, _, project_path, _ = matching_sessions[idx]
+                    session_id, _, _, _, _, _, _, _, project_path, _ = matching_sessions[idx]
                     resume_session(session_id, project_path, shell_mode=args.shell, claude_home=args.claude_home)
                 else:
                     print("Invalid choice", file=sys.stderr)

@@ -18,7 +18,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional, cast
 
 # Import search functions from agent modules
 from coding_agent_tools.claude_sessions import (
@@ -48,6 +48,9 @@ try:
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
+    Console = cast(Any, None)
+    Table = cast(Any, None)
+    box = cast(Any, None)
 
 
 @dataclass
@@ -132,6 +135,20 @@ def search_all_agents(
 
             # Add agent metadata to each session
             for session in sessions:
+                if len(session) >= 10:
+                    first_message = session[5]
+                    last_message = session[6]
+                    match_score = session[7]
+                    cwd = session[8]
+                    branch = session[9]
+                else:
+                    preview = session[5] if len(session) > 5 else ""
+                    first_message = preview
+                    last_message = preview
+                    match_score = 0.0
+                    cwd = session[6] if len(session) > 6 else ""
+                    branch = session[7] if len(session) > 7 else ""
+
                 session_dict = {
                     "agent": "claude",
                     "agent_display": agent_config.display_name,
@@ -140,9 +157,11 @@ def search_all_agents(
                     "create_time": session[2],
                     "lines": session[3],
                     "project": session[4],
-                    "preview": session[5],
-                    "cwd": session[6],
-                    "branch": session[7] if len(session) > 7 else "",
+                    "first_message": first_message,
+                    "last_message": last_message,
+                    "match_score": float(match_score or 0.0),
+                    "cwd": cwd,
+                    "branch": branch or "",
                     "claude_home": home,
                 }
                 all_sessions.append(session_dict)
@@ -162,6 +181,7 @@ def search_all_agents(
 
                 # Add agent metadata to each session
                 for session in sessions:
+                    preview = session.get("preview", "")
                     session_dict = {
                         "agent": "codex",
                         "agent_display": agent_config.display_name,
@@ -170,7 +190,9 @@ def search_all_agents(
                         "create_time": session.get("mod_time"),  # Codex doesn't separate these
                         "lines": session["lines"],
                         "project": session["project"],
-                        "preview": session["preview"],
+                        "first_message": session.get("first_message", preview),
+                        "last_message": session.get("last_message", preview),
+                        "match_score": float(session.get("match_score", 0.0) or 0.0),
                         "cwd": session["cwd"],
                         "branch": session.get("branch", ""),
                         "file_path": session.get("file_path", ""),
@@ -192,6 +214,7 @@ def search_all_agents(
 
                 # Add agent metadata to each session
                 for session in sessions:
+                    preview = session.get("preview", "")
                     session_dict = {
                         "agent": "opencode",
                         "agent_display": agent_config.display_name,
@@ -200,14 +223,22 @@ def search_all_agents(
                         "create_time": session.get("create_time", session["mod_time"]),
                         "lines": session["lines"],
                         "project": session["project"],
-                        "preview": session["preview"],
+                        "first_message": session.get("first_message", preview),
+                        "last_message": session.get("last_message", preview),
+                        "match_score": float(session.get("match_score", 0.0) or 0.0),
                         "cwd": session["cwd"],
                         "branch": session.get("branch", ""),
                     }
                     all_sessions.append(session_dict)
 
-    # Sort by modification time (newest first) and limit
-    all_sessions.sort(key=lambda x: x["mod_time"], reverse=True)
+    if keywords:
+        all_sessions.sort(
+            key=lambda x: (float(x.get("match_score", 0.0) or 0.0), x["mod_time"]),
+            reverse=True,
+        )
+    else:
+        all_sessions.sort(key=lambda x: x["mod_time"], reverse=True)
+
     return all_sessions[:num_matches]
 
 
@@ -243,7 +274,8 @@ def display_interactive_ui(
     table.add_column("Branch", style="cyan")
     table.add_column("Date", style="blue")
     table.add_column("Lines", style="cyan", justify="right", width=6)
-    table.add_column("First + Last User Message", style="white", max_width=50, overflow="fold")
+    table.add_column("First Message", style="white", max_width=40, overflow="fold")
+    table.add_column("Last Message", style="white", max_width=40, overflow="fold")
 
     for idx, session in enumerate(display_sessions, 1):
         # Format date from mod_time
@@ -253,6 +285,8 @@ def display_interactive_ui(
         date_str = datetime.fromtimestamp(mod_time).strftime("%m/%d %H:%M")
 
         branch_display = session.get("branch", "") or "N/A"
+        first_message = session.get("first_message", "") or ""
+        last_message = session.get("last_message", "") or ""
 
         table.add_row(
             str(idx),
@@ -262,7 +296,8 @@ def display_interactive_ui(
             branch_display,
             date_str,
             str(session["lines"]),
-            session["preview"],
+            first_message,
+            last_message,
         )
 
     ui_console.print(table)
