@@ -1,14 +1,14 @@
 [project]
 name = "coding-agent-tools"
-version = "0.1.11"
+version = "0.1.12"
 description = "Session search and unified usage analytics for coding agents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "rich>=13.0.0",
     "rapidfuzz>=3.0.0",
+    "textual>=0.47.0",
 ]
-
 [project.scripts]
 find-session = "coding_agent_tools.find_session:main"
 agent-usage = "coding_agent_tools.agent_usage:main"
