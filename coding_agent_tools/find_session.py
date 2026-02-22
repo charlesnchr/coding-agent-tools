@@ -135,12 +135,20 @@ def search_all_agents(
 
             # Add agent metadata to each session
             for session in sessions:
-                if len(session) >= 10:
+                if len(session) >= 11:
                     first_message = session[5]
                     last_message = session[6]
                     match_score = session[7]
                     cwd = session[8]
                     branch = session[9]
+                    best_chunk = session[10]
+                elif len(session) >= 10:
+                    first_message = session[5]
+                    last_message = session[6]
+                    match_score = session[7]
+                    cwd = session[8]
+                    branch = session[9]
+                    best_chunk = None
                 else:
                     preview = session[5] if len(session) > 5 else ""
                     first_message = preview
@@ -148,7 +156,7 @@ def search_all_agents(
                     match_score = 0.0
                     cwd = session[6] if len(session) > 6 else ""
                     branch = session[7] if len(session) > 7 else ""
-
+                    best_chunk = None
                 session_dict = {
                     "agent": "claude",
                     "agent_display": agent_config.display_name,
@@ -160,6 +168,7 @@ def search_all_agents(
                     "first_message": first_message,
                     "last_message": last_message,
                     "match_score": float(match_score or 0.0),
+                    "best_chunk": best_chunk,
                     "cwd": cwd,
                     "branch": branch or "",
                     "claude_home": home,
@@ -187,12 +196,13 @@ def search_all_agents(
                         "agent_display": agent_config.display_name,
                         "session_id": session["session_id"],
                         "mod_time": session["mod_time"],
-                        "create_time": session.get("mod_time"),  # Codex doesn't separate these
+                        "create_time": session.get("mod_time"),
                         "lines": session["lines"],
                         "project": session["project"],
                         "first_message": session.get("first_message", preview),
                         "last_message": session.get("last_message", preview),
                         "match_score": float(session.get("match_score", 0.0) or 0.0),
+                        "best_chunk": session.get("best_chunk"),
                         "cwd": session["cwd"],
                         "branch": session.get("branch", ""),
                         "file_path": session.get("file_path", ""),
@@ -226,6 +236,7 @@ def search_all_agents(
                         "first_message": session.get("first_message", preview),
                         "last_message": session.get("last_message", preview),
                         "match_score": float(session.get("match_score", 0.0) or 0.0),
+                        "best_chunk": session.get("best_chunk"),
                         "cwd": session["cwd"],
                         "branch": session.get("branch", ""),
                     }
@@ -259,46 +270,72 @@ def display_interactive_ui(
         ui_console.print("[red]No sessions found[/red]")
         return None
 
+    # Determine if we're in keyword search mode
+    has_keywords = bool(keywords)
     # Create table
     title = (
-        f"Sessions matching: {', '.join(keywords)}" if keywords else "All sessions"
+        f"Sessions matching: {', '.join(keywords)}" if has_keywords else "All sessions"
     )
     table = Table(
-        title=title, box=box.ROUNDED, show_header=True, header_style="bold cyan"
+        title=title, box=box.ROUNDED, show_header=True, header_style="bold cyan",
+        padding=(0, 1),
     )
+    table.add_column("#", style="bold yellow", width=3, no_wrap=True)
+    table.add_column("Agent", style="magenta", width=5, no_wrap=True)
+    table.add_column("Session", style="dim", width=8, no_wrap=True)
+    table.add_column("Project", style="green", max_width=16, no_wrap=True, overflow="ellipsis")
+    table.add_column("Branch", style="cyan", max_width=14, no_wrap=True, overflow="ellipsis")
+    table.add_column("Date", style="blue", width=11, no_wrap=True)
+    table.add_column("Lines", style="cyan", justify="right", width=5, no_wrap=True)
+    table.add_column("First Msg", style="white", min_width=10, max_width=30, no_wrap=True, overflow="ellipsis")
+    table.add_column("Last Msg", style="white", min_width=10, max_width=30, no_wrap=True, overflow="ellipsis")
+    if has_keywords:
+        table.add_column("Score", style="yellow", justify="right", width=5, no_wrap=True)
+        table.add_column("Best Match", style="white", min_width=12, max_width=40, no_wrap=True, overflow="ellipsis")
+    # Reverse display order so best match (#1) is at bottom of table (nearest prompt)
+    from datetime import datetime
+    import re
+    reversed_sessions = list(reversed(display_sessions))
 
-    table.add_column("#", style="bold yellow", width=3)
-    table.add_column("Agent", style="magenta", width=6)
-    table.add_column("Session ID", style="dim", width=10)
-    table.add_column("Project", style="green")
-    table.add_column("Branch", style="cyan")
-    table.add_column("Date", style="blue")
-    table.add_column("Lines", style="cyan", justify="right", width=6)
-    table.add_column("First Message", style="white", max_width=40, overflow="fold")
-    table.add_column("Last Message", style="white", max_width=40, overflow="fold")
-
-    for idx, session in enumerate(display_sessions, 1):
-        # Format date from mod_time
-        from datetime import datetime
-
+    for display_idx, session in enumerate(reversed_sessions):
+        # Original ranking index (1 = best match)
+        idx = len(display_sessions) - display_idx
         mod_time = session["mod_time"]
         date_str = datetime.fromtimestamp(mod_time).strftime("%m/%d %H:%M")
+        branch_display = session.get("branch", "") or ""
+        first_msg = (session.get("first_message", "") or "")[:80]
+        last_msg = (session.get("last_message", "") or "")[:80]
 
-        branch_display = session.get("branch", "") or "N/A"
-        first_message = session.get("first_message", "") or ""
-        last_message = session.get("last_message", "") or ""
-
-        table.add_row(
+        row = [
             str(idx),
             session["agent_display"],
-            session["session_id"][:8] + "...",
+            session["session_id"][:8],
             session["project"],
             branch_display,
             date_str,
             str(session["lines"]),
-            first_message,
-            last_message,
-        )
+            first_msg,
+            last_msg,
+        ]
+
+        if has_keywords:
+            score = session.get("match_score", 0.0) or 0.0
+            row.append(f"{score:.0f}")
+            # Build highlighted best_chunk (truncate to 120 chars before highlighting)
+            chunk = (session.get("best_chunk", "") or "")[:120]
+            if chunk and keywords:
+                highlighted = chunk
+                for kw in keywords:
+                    pattern = re.compile(re.escape(kw), re.IGNORECASE)
+                    highlighted = pattern.sub(
+                        lambda m: f"[bold green]{m.group()}[/bold green]",
+                        highlighted,
+                    )
+                row.append(highlighted)
+            else:
+                row.append(chunk)
+
+        table.add_row(*row)
 
     ui_console.print(table)
     ui_console.print("\n[bold]Select a session:[/bold]")

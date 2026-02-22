@@ -17,7 +17,6 @@ For the directory change to persist, use the shell function:
 import argparse
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -46,6 +45,23 @@ except ImportError:
 RICH_AVAILABLE = Console is not None
 
 console = Console() if RICH_AVAILABLE else None
+
+
+CLEAN_TRANSLATION = str.maketrans(
+    {
+        "{": " ",
+        "}": " ",
+        "[": " ",
+        "]": " ",
+        '"': " ",
+        "'": " ",
+        "\\": " ",
+    }
+)
+
+
+def _normalize_for_display(text: str) -> str:
+    return " ".join(text.translate(CLEAN_TRANSLATION).split())
 
 
 def get_claude_project_dir(claude_home: Optional[str] = None) -> Path:
@@ -149,8 +165,7 @@ def _extract_clean_text(value: object) -> str:
     _collect_strings(value)
 
     text = " ".join(text_parts)
-    text = re.sub(r"[{}\[\]\"'\\]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return _normalize_for_display(text)
 
 
 def search_keywords_in_file(
@@ -204,32 +219,40 @@ def search_keywords_in_file(
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in f:
                 line_count += 1
-                line_lower = line.lower()
-                cleaned_line = re.sub(r"\s+", " ", re.sub(r"[{}\[\]\"'\\]", " ", line)).strip()
+                line_lower = line.lower() if keywords_lower else ""
+
+                # Fuzzy match each keyword against this session line
+                line_score = 0.0
+                if keywords_lower:
+                    for idx, keyword in enumerate(keywords_lower):
+                        if keyword in line_lower:
+                            score = 100.0
+                        else:
+                            score = max(
+                                fuzz.partial_ratio(keyword, line_lower),
+                                fuzz.token_set_ratio(keyword, line_lower),
+                            )
+                        line_score += score
+                        if score > keyword_best_scores[idx]:
+                            keyword_best_scores[idx] = score
 
                 data = None
                 try:
                     data = json.loads(line.strip())
-                    json_text = _extract_clean_text(data)
-                    if json_text:
-                        cleaned_line = json_text
                 except (json.JSONDecodeError, TypeError):
                     data = None
 
-                # Fuzzy match each keyword against this session line
-                line_score = 0.0
-                for idx, keyword in enumerate(keywords_lower):
-                    score = max(
-                        fuzz.partial_ratio(keyword, line_lower),
-                        fuzz.token_set_ratio(keyword, line_lower),
-                    )
-                    line_score += score
-                    if score > keyword_best_scores[idx]:
-                        keyword_best_scores[idx] = score
-
-                if keywords_lower and cleaned_line and line_score > best_line_score:
+                if keywords_lower and line_score > best_line_score:
                     best_line_score = line_score
-                    best_chunk = cleaned_line[:300]
+                    if data is not None:
+                        json_text = _extract_clean_text(data)
+                        best_chunk = (
+                            json_text[:300]
+                            if json_text
+                            else _normalize_for_display(line)[:300]
+                        )
+                    else:
+                        best_chunk = _normalize_for_display(line)[:300]
 
                 if data is None:
                     continue

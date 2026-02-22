@@ -14,7 +14,6 @@ Examples:
 import argparse
 import json
 import os
-import re
 import shlex
 import sqlite3
 import sys
@@ -43,9 +42,29 @@ class OpenCodeSessionMatch(TypedDict):
     create_time: float
     lines: int
     preview: str
+    match_score: Optional[float]
     best_chunk: Optional[str]
+    first_message: Optional[str]
+    last_message: Optional[str]
     cwd: str
     title: str
+
+
+CLEAN_TRANSLATION = str.maketrans(
+    {
+        "{": " ",
+        "}": " ",
+        "[": " ",
+        "]": " ",
+        '"': " ",
+        "'": " ",
+        "\\": " ",
+    }
+)
+
+
+def _normalize_for_display(text: str) -> str:
+    return " ".join(text.translate(CLEAN_TRANSLATION).split())
 
 
 def get_opencode_home(custom_home: Optional[str] = None) -> Path:
@@ -110,8 +129,7 @@ def _extract_clean_text(value: object) -> str:
 
     _collect_strings(value)
     text = " ".join(text_parts)
-    text = re.sub(r"[{}\[\]\"'\\]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return _normalize_for_display(text)
 
 
 def find_sessions(
@@ -176,7 +194,9 @@ def find_sessions(
                     continue
 
             # Search keywords in message parts
-            found, preview, best_chunk = _search_session_keywords(conn, session_id, keywords)
+            found, preview, match_score, best_chunk, first_msg, last_msg = _search_session_keywords(
+                conn, session_id, keywords
+            )
             if not found:
                 continue
 
@@ -201,7 +221,10 @@ def find_sessions(
                     "create_time": create_time,
                     "lines": session["msg_count"],
                     "preview": preview or title or "No preview",
+                    "match_score": match_score,
                     "best_chunk": best_chunk,
+                    "first_message": first_msg,
+                    "last_message": last_msg,
                     "cwd": cwd,
                     "title": title,
                 }
@@ -224,13 +247,14 @@ def find_sessions(
 
 def _search_session_keywords(
     conn: sqlite3.Connection, session_id: str, keywords: list[str]
-) -> tuple[bool, Optional[str], Optional[str]]:
+) -> tuple[bool, Optional[str], Optional[float], Optional[str], Optional[str], Optional[str]]:
     """
     Search for keywords in session message parts.
 
-    Returns: (found, preview, best_chunk)
+    Returns: (found, preview, match_score, best_chunk)
     - found: True if all keywords found (or True if no keywords)
     - preview: first and last user message text
+    - match_score: average fuzzy score across keywords, or None when no keywords
     - best_chunk: best-matching plain-text chunk from session parts
     """
     first_any = None
@@ -253,37 +277,39 @@ def _search_session_keywords(
     ).fetchall()
 
     keywords_lower = [k.lower() for k in keywords]
-    found_keywords = set()
+    keyword_best_scores = [0.0 for _ in keywords_lower]
 
     for row in rows:
         part_data_str = row["part_data"] or ""
         msg_data_str = row["msg_data"] or ""
         combined_lower = (part_data_str + msg_data_str).lower()
 
-        clean_text = re.sub(
-            r"\s+",
-            " ",
-            re.sub(r"[{}\[\]\"'\\]", " ", part_data_str + " " + msg_data_str),
-        ).strip()
-
         try:
             part_data = json.loads(part_data_str)
             msg_data = json.loads(msg_data_str)
 
-            row_clean_text = _extract_clean_text([part_data, msg_data])
-            if row_clean_text:
-                clean_text = row_clean_text
-
             line_score = 0.0
-            for kw in keywords_lower:
-                line_score += max(
-                    fuzz.partial_ratio(kw, combined_lower),
-                    fuzz.token_set_ratio(kw, combined_lower),
-                )
+            if keywords_lower:
+                for idx, kw in enumerate(keywords_lower):
+                    if kw in combined_lower:
+                        score = 100.0
+                    else:
+                        score = max(
+                            fuzz.partial_ratio(kw, combined_lower),
+                            fuzz.token_set_ratio(kw, combined_lower),
+                        )
+                    line_score += score
+                    if score > keyword_best_scores[idx]:
+                        keyword_best_scores[idx] = score
 
-            if keywords_lower and clean_text and line_score > best_line_score:
-                best_line_score = line_score
-                best_chunk = clean_text[:300]
+                if line_score > best_line_score:
+                    best_line_score = line_score
+                    row_clean_text = _extract_clean_text([part_data, msg_data])
+                    best_chunk = (
+                        row_clean_text[:300]
+                        if row_clean_text
+                        else _normalize_for_display(part_data_str + " " + msg_data_str)[:300]
+                    )
 
             # Extract user messages for first+last preview
             if msg_data.get("role") == "user":
@@ -300,37 +326,44 @@ def _search_session_keywords(
                                 first_substantial = cleaned
                             last_substantial = cleaned
 
-            # Search for keywords in all text content (both part and message data)
-            if keywords_lower:
-                for kw in keywords_lower:
-                    if kw in combined_lower:
-                        found_keywords.add(kw)
-
         except (json.JSONDecodeError, KeyError):
             line_score = 0.0
-            for kw in keywords_lower:
-                line_score += max(
-                    fuzz.partial_ratio(kw, combined_lower),
-                    fuzz.token_set_ratio(kw, combined_lower),
-                )
-
-            if keywords_lower and clean_text and line_score > best_line_score:
-                best_line_score = line_score
-                best_chunk = clean_text[:300]
-
             if keywords_lower:
-                for kw in keywords_lower:
+                for idx, kw in enumerate(keywords_lower):
                     if kw in combined_lower:
-                        found_keywords.add(kw)
+                        score = 100.0
+                    else:
+                        score = max(
+                            fuzz.partial_ratio(kw, combined_lower),
+                            fuzz.token_set_ratio(kw, combined_lower),
+                        )
+                    line_score += score
+                    if score > keyword_best_scores[idx]:
+                        keyword_best_scores[idx] = score
+
+                if line_score > best_line_score:
+                    best_line_score = line_score
+                    best_chunk = _normalize_for_display(part_data_str + " " + msg_data_str)[:300]
             continue
 
-    all_found = True if not keywords_lower else len(found_keywords) == len(keywords_lower)
-    if not all_found:
-        return False, None, None
+    if not keywords_lower:
+        found = True
+        match_score = None
+    else:
+        min_score = min(keyword_best_scores) if keyword_best_scores else 0.0
+        found = min_score >= 70
+        match_score = (
+            sum(keyword_best_scores) / len(keyword_best_scores)
+            if keyword_best_scores
+            else 0.0
+        )
+
+    if not found:
+        return False, None, match_score, None, None, None
 
     first_message = first_substantial or first_any
     last_message = last_substantial or last_any
-    return True, format_preview(first_message, last_message), best_chunk
+    return True, format_preview(first_message, last_message), match_score, best_chunk, first_message, last_message
 
 
 def _is_system_message(text: str) -> bool:

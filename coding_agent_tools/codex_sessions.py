@@ -51,9 +51,27 @@ class CodexSessionMatch(TypedDict):
     mod_time: float
     lines: int
     preview: str
+    match_score: Optional[float]
     best_chunk: Optional[str]
     cwd: str
     file_path: str
+
+
+CLEAN_TRANSLATION = str.maketrans(
+    {
+        "{": " ",
+        "}": " ",
+        "[": " ",
+        "]": " ",
+        '"': " ",
+        "'": " ",
+        "\\": " ",
+    }
+)
+
+
+def _normalize_for_display(text: str) -> str:
+    return " ".join(text.translate(CLEAN_TRANSLATION).split())
 
 
 def get_codex_home(custom_home: Optional[str] = None) -> Path:
@@ -158,24 +176,24 @@ def _extract_clean_text(value: object) -> str:
 
     _collect_strings(value)
     text = " ".join(text_parts)
-    text = re.sub(r"[{}\[\]\"'\\]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return _normalize_for_display(text)
 
 
 def search_keywords_in_file(
     session_file: Path, keywords: list[str]
-) -> tuple[bool, int, Optional[str], Optional[str]]:
+) -> tuple[bool, int, Optional[str], Optional[float], Optional[str]]:
     """
     Search for keywords in a Codex session file.
 
-    Returns: (found, line_count, preview, best_chunk)
-    - found: True if all keywords found (case-insensitive AND logic), or True if no keywords
+    Returns: (found, line_count, preview, match_score, best_chunk)
+    - found: True if fuzzy threshold is met for all keywords, or True if no keywords
     - line_count: total lines in file
     - preview: first and last user message content (skips system messages)
+    - match_score: average fuzzy score across keywords, or None when no keywords
     - best_chunk: best-matching plain-text chunk from session lines
     """
     keywords_lower = [k.lower() for k in keywords]
-    found_keywords = set()
+    keyword_best_scores = [0.0 for _ in keywords_lower]
     line_count = 0
     first_any = None
     first_substantial = None
@@ -191,8 +209,7 @@ def search_keywords_in_file(
                 if not line.strip():
                     continue
 
-                line_lower = line.lower()
-                cleaned_line = re.sub(r"\s+", " ", re.sub(r"[{}\[\]\"'\\]", " ", line)).strip()
+                line_lower = line.lower() if keywords_lower else ""
 
                 try:
                     entry = json.loads(line)
@@ -201,15 +218,27 @@ def search_keywords_in_file(
                         cleaned_line = entry_clean_text
 
                     line_score = 0.0
-                    for kw in keywords_lower:
-                        line_score += max(
-                            fuzz.partial_ratio(kw, line_lower),
-                            fuzz.token_set_ratio(kw, line_lower),
-                        )
+                    if keywords_lower:
+                        for idx, kw in enumerate(keywords_lower):
+                            if kw in line_lower:
+                                score = 100.0
+                            else:
+                                score = max(
+                                    fuzz.partial_ratio(kw, line_lower),
+                                    fuzz.token_set_ratio(kw, line_lower),
+                                )
+                            line_score += score
+                            if score > keyword_best_scores[idx]:
+                                keyword_best_scores[idx] = score
 
-                    if keywords_lower and cleaned_line and line_score > best_line_score:
-                        best_line_score = line_score
-                        best_chunk = cleaned_line[:300]
+                        if line_score > best_line_score:
+                            best_line_score = line_score
+                            entry_clean_text = _extract_clean_text(entry)
+                            best_chunk = (
+                                entry_clean_text[:300]
+                                if entry_clean_text
+                                else _normalize_for_display(line)[:300]
+                            )
 
                     # Extract user messages (skip system messages) for first+last preview
                     if (
@@ -233,26 +262,38 @@ def search_keywords_in_file(
                                             first_substantial = cleaned
                                         last_substantial = cleaned
 
-                    # Search for keywords in all text content
-                    if keywords_lower:
-                        line_lower = line.lower()
-                        for kw in keywords_lower:
-                            if kw in line_lower:
-                                found_keywords.add(kw)
-
                 except json.JSONDecodeError:
                     continue
 
-        all_found = True if not keywords_lower else len(found_keywords) == len(keywords_lower)
-        if not all_found:
-            return False, line_count, None, None
+        if not keywords_lower:
+            found = True
+            match_score = None
+        else:
+            min_score = min(keyword_best_scores) if keyword_best_scores else 0.0
+            found = min_score >= 70
+            match_score = (
+                sum(keyword_best_scores) / len(keyword_best_scores)
+                if keyword_best_scores
+                else 0.0
+            )
+
+        if not found:
+            return False, line_count, None, match_score, None, None, None
 
         first_message = first_substantial or first_any
         last_message = last_substantial or last_any
-        return True, line_count, format_preview(first_message, last_message), best_chunk
+        return (
+                    True,
+                    line_count,
+                    format_preview(first_message, last_message),
+                    match_score,
+                    best_chunk,
+                    first_message,
+                    last_message,
+                )
 
     except (OSError, IOError):
-        return False, 0, None, None
+        return False, 0, None, None, None, None, None
 
 
 def find_sessions(
@@ -302,7 +343,7 @@ def find_sessions(
 
                 for session_file in session_files:
                     # Search for keywords
-                    found, line_count, preview, best_chunk = search_keywords_in_file(
+                    found, line_count, preview, match_score, best_chunk, first_msg, last_msg = search_keywords_in_file(
                         session_file, keywords
                     )
 
@@ -345,9 +386,12 @@ def find_sessions(
                             "project": get_project_name(metadata["cwd"]),
                             "branch": metadata["branch"] or "",
                             "date": date_str,
-                            "mod_time": mod_time,  # For sorting
+                            "mod_time": mod_time,
                             "lines": line_count,
                             "preview": preview or "No preview",
+                            "first_message": first_msg or "",
+                            "last_message": last_msg or "",
+                            "match_score": match_score,
                             "best_chunk": best_chunk,
                             "cwd": metadata["cwd"],
                             "file_path": str(session_file),
