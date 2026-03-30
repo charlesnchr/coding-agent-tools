@@ -513,6 +513,17 @@ Examples:
     parser.add_argument(
         "--opencode-home", type=str, help="Path to OpenCode data directory (default: ~/.local/share/opencode)"
     )
+    parser.add_argument(
+        "--semantic",
+        action="store_true",
+        default=None,
+        help="Enable hybrid semantic+keyword search (auto-enabled when index exists)",
+    )
+    parser.add_argument(
+        "--no-semantic",
+        action="store_true",
+        help="Disable semantic search even when index exists",
+    )
 
     args = parser.parse_args()
 
@@ -533,6 +544,21 @@ Examples:
         codex_home=args.codex_home,
         opencode_home=args.opencode_home,
     )
+
+    # Hybrid semantic search (if available and not disabled)
+    use_hybrid = keywords and not args.no_semantic
+    if use_hybrid:
+        try:
+            from coding_agent_tools.hybrid_search import hybrid_search
+            matching_sessions = hybrid_search(
+                keywords=keywords,
+                keyword_results=matching_sessions,
+                global_search=args.global_search,
+                agents=args.agents,
+                num_results=args.num_matches,
+            )
+        except ImportError:
+            pass  # semantic deps not installed, keyword-only
 
     if not matching_sessions:
         scope = "all projects" if args.global_search else "current project"
