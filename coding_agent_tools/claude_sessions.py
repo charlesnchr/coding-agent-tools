@@ -815,6 +815,14 @@ def resume_session(session_id: str, project_path: str, shell_mode: bool = False,
     try:
         # Change directory if needed (won't persist after exit)
         if change_dir and project_path != current_dir:
+            if not os.path.isdir(project_path):
+                if RICH_AVAILABLE and console:
+                    console.print(f"[yellow]Warning:[/yellow] Session directory no longer exists: {project_path}")
+                    console.print(f"Creating it so Claude can find the session...")
+                else:
+                    print(f"Warning: Session directory no longer exists: {project_path}", file=sys.stderr)
+                    print(f"Creating it so Claude can find the session...", file=sys.stderr)
+                os.makedirs(project_path, exist_ok=True)
             os.chdir(project_path)
 
         # Set CLAUDE_CONFIG_DIR environment variable if custom path specified
@@ -825,7 +833,7 @@ def resume_session(session_id: str, project_path: str, shell_mode: bool = False,
 
         # Execute claude
         os.execvp("claude", ["claude", "-r", session_id])
-        
+
     except FileNotFoundError:
         if RICH_AVAILABLE and console:
             console.print("[red]Error:[/red] 'claude' command not found. Make sure Claude CLI is installed.")
