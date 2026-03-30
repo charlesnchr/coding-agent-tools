@@ -236,8 +236,8 @@ def find_sessions(
 
         conn.close()
 
-    except sqlite3.Error as e:
-        print(f"Database error: {e}", file=sys.stderr)
+    except sqlite3.Error:
+        # Silently skip - DB may be locked by OpenCode or inaccessible
         return []
 
     # Sort by modification time (newest first) and limit
