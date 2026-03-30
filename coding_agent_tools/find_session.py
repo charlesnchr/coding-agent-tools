@@ -294,6 +294,8 @@ def display_interactive_ui(
     table.add_column("Last Msg", style="white", min_width=10, max_width=30, overflow="fold")
     if has_keywords:
         table.add_column("Score", style="yellow", justify="right", width=5, no_wrap=True)
+        if hybrid:
+            table.add_column("Src", style="magenta", width=3, no_wrap=True, justify="center")
         table.add_column("Best Match", style="white", min_width=12, max_width=30, overflow="fold")
     # Reverse display order so best match (#1) is at bottom of table (nearest prompt)
     from datetime import datetime
@@ -324,6 +326,8 @@ def display_interactive_ui(
         if has_keywords:
             score = session.get("match_score", 0.0) or 0.0
             row.append(f"{score:.0f}")
+            if hybrid:
+                row.append(session.get("search_source", "K"))
             # Build highlighted best_chunk (truncate to 60 chars before highlighting)
             chunk = (session.get("best_chunk", "") or "")[:60]
             if chunk and keywords:

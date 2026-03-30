@@ -154,6 +154,14 @@ def reciprocal_rank_fusion(
         session["hybrid_score"] = rrf_score
         session["match_score"] = rrf_score * 100  # scale for display
 
+        # Set search source indicator
+        if kr is not None and sr is not None:
+            session["search_source"] = "K+S"
+        elif kr is not None:
+            session["search_source"] = "K"
+        else:
+            session["search_source"] = "S"
+
         # Use semantic chunk as best_chunk when available and keyword didn't have one
         if not session.get("best_chunk") and session.get("semantic_chunk"):
             session["best_chunk"] = session["semantic_chunk"]
