@@ -254,7 +254,8 @@ def search_all_agents(
 
 
 def display_interactive_ui(
-    sessions: List[dict], keywords: List[str], stderr_mode: bool = False, num_matches: int = 10
+    sessions: List[dict], keywords: List[str], stderr_mode: bool = False, num_matches: int = 10,
+    hybrid: bool = False,
 ) -> Optional[dict]:
     """Display unified session selection UI."""
     if not RICH_AVAILABLE:
@@ -273,9 +274,11 @@ def display_interactive_ui(
     # Determine if we're in keyword search mode
     has_keywords = bool(keywords)
     # Create table
-    title = (
-        f"Sessions matching: {', '.join(keywords)}" if has_keywords else "All sessions"
-    )
+    if has_keywords:
+        mode = "hybrid" if hybrid else "keyword"
+        title = f"Sessions matching: {', '.join(keywords)} \\[{mode}]"
+    else:
+        title = "All sessions"
     table = Table(
         title=title, box=box.ROUNDED, show_header=True, header_style="bold cyan",
         padding=(0, 1),
@@ -546,17 +549,21 @@ Examples:
     )
 
     # Hybrid semantic search (if available and not disabled)
-    use_hybrid = keywords and not args.no_semantic
-    if use_hybrid:
+    used_hybrid = False
+    if keywords and not args.no_semantic:
         try:
             from coding_agent_tools.hybrid_search import hybrid_search
-            matching_sessions = hybrid_search(
+            hybrid_results = hybrid_search(
                 keywords=keywords,
                 keyword_results=matching_sessions,
                 global_search=args.global_search,
                 agents=args.agents,
                 num_results=args.num_matches,
             )
+            # hybrid_search returns the input unchanged if index is empty/unavailable
+            if any(s.get("hybrid_score") for s in hybrid_results):
+                matching_sessions = hybrid_results
+                used_hybrid = True
         except ImportError:
             pass  # semantic deps not installed, keyword-only
 
@@ -575,7 +582,8 @@ Examples:
     # Display interactive UI
     if RICH_AVAILABLE:
         selected_session = display_interactive_ui(
-            matching_sessions, keywords, stderr_mode=args.shell, num_matches=args.num_matches
+            matching_sessions, keywords, stderr_mode=args.shell, num_matches=args.num_matches,
+            hybrid=used_hybrid,
         )
         if selected_session:
             # Show action menu
