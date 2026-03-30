@@ -73,7 +73,7 @@ def chunk_claude_session(
         "cwd": cwd,
         "branch": branch,
         "file_path": str(filepath),
-        "file_mtime": stat.st_mtime,
+        "file_mtime": round(stat.st_mtime, 2),
         "file_size": stat.st_size,
     }
 
@@ -177,7 +177,7 @@ def chunk_codex_session(
         "cwd": cwd,
         "branch": branch,
         "file_path": str(filepath),
-        "file_mtime": stat.st_mtime,
+        "file_mtime": round(stat.st_mtime, 2),
         "file_size": stat.st_size,
     }
 

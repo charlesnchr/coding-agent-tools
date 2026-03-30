@@ -1,5 +1,6 @@
 """ChromaDB-based vector store for session chunks."""
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,52 @@ class SessionVectorStore:
         self.store_path = store_path or DEFAULT_STORE_PATH
         os.makedirs(self.store_path, exist_ok=True)
         self._client = chromadb.PersistentClient(path=self.store_path)
+        self._tracker_path = os.path.join(self.store_path, "file_tracker.json")
+        self._tracker: Optional[dict] = None
+
+    def _load_tracker(self) -> dict:
+        if self._tracker is None:
+            if os.path.exists(self._tracker_path):
+                with open(self._tracker_path) as f:
+                    self._tracker = json.load(f)
+            else:
+                self._tracker = {}
+        return self._tracker
+
+    def _save_tracker(self) -> None:
+        if self._tracker is not None:
+            with open(self._tracker_path, "w") as f:
+                json.dump(self._tracker, f)
+
+    def track_file(self, agent: str, file_path: str, mtime: float, size: int) -> None:
+        """Record that a file has been processed (with or without chunks)."""
+        tracker = self._load_tracker()
+        key = f"{agent}:{file_path}"
+        tracker[key] = {"mtime": round(mtime, 2), "size": size}
+        self._save_tracker()
+
+    def get_tracked_files(self, agent: str) -> dict[str, tuple[float, int]]:
+        """Get all tracked files for an agent as {file_path: (mtime, size)}."""
+        tracker = self._load_tracker()
+        prefix = f"{agent}:"
+        result = {}
+        for key, val in tracker.items():
+            if key.startswith(prefix):
+                fp = key[len(prefix):]
+                result[fp] = (val["mtime"], val["size"])
+        return result
+
+    def untrack_file(self, agent: str, file_path: str) -> None:
+        """Remove a file from the tracker."""
+        tracker = self._load_tracker()
+        key = f"{agent}:{file_path}"
+        tracker.pop(key, None)
+        self._save_tracker()
+
+    def clear_tracker(self) -> None:
+        """Clear all tracked files."""
+        self._tracker = {}
+        self._save_tracker()
 
     def get_collection(self, agent: str) -> chromadb.Collection:
         """Get or create a collection for an agent type."""

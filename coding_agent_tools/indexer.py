@@ -184,6 +184,7 @@ def build_index(
         if console:
             console.print("[yellow]Full re-index requested. Clearing existing index...[/yellow]")
         store.clear()
+        store.clear_tracker()
 
     target_agents = agents or ["claude", "codex", "opencode"]
 
@@ -221,7 +222,7 @@ def _index_claude(embedder, store, claude_home, console, full):
             console.print("[dim]No Claude sessions found.[/dim]")
         return
 
-    indexed = {} if full else store.get_indexed_files("claude")
+    tracked = {} if full else store.get_tracked_files("claude")
     to_process = []
     current_paths = set()
 
@@ -229,14 +230,15 @@ def _index_claude(embedder, store, claude_home, console, full):
         fp = str(filepath)
         current_paths.add(fp)
         stat = filepath.stat()
-        prev = indexed.get(fp)
-        if prev and prev[0] == stat.st_mtime and prev[1] == stat.st_size:
+        prev = tracked.get(fp)
+        if prev and prev[0] == round(stat.st_mtime, 2) and prev[1] == stat.st_size:
             continue  # unchanged
         to_process.append((filepath, project_name, project_path))
 
     # Delete removed files
-    for fp in set(indexed.keys()) - current_paths:
+    for fp in set(tracked.keys()) - current_paths:
         store.delete_by_file("claude", fp)
+        store.untrack_file("claude", fp)
 
     if not to_process:
         if console:
@@ -265,7 +267,7 @@ def _index_codex(embedder, store, codex_home, console, full):
             console.print("[dim]No Codex sessions found.[/dim]")
         return
 
-    indexed = {} if full else store.get_indexed_files("codex")
+    tracked = {} if full else store.get_tracked_files("codex")
     to_process = []
     current_paths = set()
 
@@ -273,13 +275,14 @@ def _index_codex(embedder, store, codex_home, console, full):
         fp = str(filepath)
         current_paths.add(fp)
         stat = filepath.stat()
-        prev = indexed.get(fp)
-        if prev and prev[0] == stat.st_mtime and prev[1] == stat.st_size:
+        prev = tracked.get(fp)
+        if prev and prev[0] == round(stat.st_mtime, 2) and prev[1] == stat.st_size:
             continue
         to_process.append((filepath, session_id, project_name, cwd, branch))
 
-    for fp in set(indexed.keys()) - current_paths:
+    for fp in set(tracked.keys()) - current_paths:
         store.delete_by_file("codex", fp)
+        store.untrack_file("codex", fp)
 
     if not to_process:
         if console:
@@ -341,6 +344,15 @@ def _process_file_batch(file_list, chunker_fn, agent, embedder, store, console):
     """Process a batch of files: chunk, embed, store."""
     all_chunks = []
 
+    def _process_item(item):
+        filepath = item[0]
+        store.delete_by_file(agent, str(filepath))
+        chunks = chunker_fn(*item)
+        if chunks:
+            all_chunks.extend(chunks)
+        stat = filepath.stat()
+        store.track_file(agent, str(filepath), stat.st_mtime, stat.st_size)
+
     if RICH_AVAILABLE and console:
         with Progress(
             SpinnerColumn(),
@@ -352,16 +364,11 @@ def _process_file_batch(file_list, chunker_fn, agent, embedder, store, console):
         ) as progress:
             task = progress.add_task("Chunking...", total=len(file_list))
             for item in file_list:
-                filepath = item[0]
-                # Delete old chunks
-                store.delete_by_file(agent, str(filepath))
-                chunks = chunker_fn(*item)
-                all_chunks.extend(chunks)
+                _process_item(item)
                 progress.advance(task)
     else:
         for item in file_list:
-            filepath = item[0]
-            store.delete_by_file(agent, str(filepath))
+            _process_item(item)
             chunks = chunker_fn(*item)
             all_chunks.extend(chunks)
 
@@ -375,6 +382,14 @@ def _process_codex_batch(file_list, embedder, store, console):
 
     all_chunks = []
 
+    def _process_item(filepath, session_id, project_name, cwd, branch):
+        store.delete_by_file("codex", str(filepath))
+        chunks = chunk_codex_session(filepath, session_id, project_name, cwd, branch)
+        if chunks:
+            all_chunks.extend(chunks)
+        stat = filepath.stat()
+        store.track_file("codex", str(filepath), stat.st_mtime, stat.st_size)
+
     if RICH_AVAILABLE and console:
         with Progress(
             SpinnerColumn(),
@@ -385,16 +400,12 @@ def _process_codex_batch(file_list, embedder, store, console):
             transient=True,
         ) as progress:
             task = progress.add_task("Chunking...", total=len(file_list))
-            for filepath, session_id, project_name, cwd, branch in file_list:
-                store.delete_by_file("codex", str(filepath))
-                chunks = chunk_codex_session(filepath, session_id, project_name, cwd, branch)
-                all_chunks.extend(chunks)
+            for item in file_list:
+                _process_item(*item)
                 progress.advance(task)
     else:
-        for filepath, session_id, project_name, cwd, branch in file_list:
-            store.delete_by_file("codex", str(filepath))
-            chunks = chunk_codex_session(filepath, session_id, project_name, cwd, branch)
-            all_chunks.extend(chunks)
+        for item in file_list:
+            _process_item(*item)
 
     if all_chunks:
         _embed_and_store(all_chunks, "codex", embedder, store, console)
@@ -514,6 +525,7 @@ Examples:
         from coding_agent_tools.vector_store import SessionVectorStore
         store = SessionVectorStore()
         store.clear()
+        store.clear_tracker()
         console = Console() if RICH_AVAILABLE else None
         if console:
             console.print("[green]Index cleared.[/green]")
